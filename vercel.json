@@ -1,0 +1,18 @@
+{
+  "framework": "nextjs",
+  "regions": ["cdg1"],
+  "functions": {
+    "src/app/api/arbitrage/analyze-stream/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/sync-products/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/sync-storefront-products/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/catalog/sync-products/route.ts": {
+      "maxDuration": 300
+    }
+  }
+}
