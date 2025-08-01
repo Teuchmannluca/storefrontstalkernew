@@ -82,10 +82,12 @@ export async function POST(request: NextRequest) {
         controller.enqueue(new TextEncoder().encode(data));
       };
 
-      try {
-        sendMessage({ type: 'progress', data: { step: 'Fetching products...', progress: 0 } });
+      let scanId: string | null = null;
 
-        // Fetch products
+      try {
+        sendMessage({ type: 'progress', data: { step: 'Initialising scan...', progress: 0 } });
+
+        // Fetch storefront details
         const { data: storefront } = await supabase
           .from('storefronts')
           .select('*')
@@ -97,26 +99,74 @@ export async function POST(request: NextRequest) {
           return;
         }
 
+        // Create scan record
+        const { data: scan, error: scanError } = await supabase
+          .from('arbitrage_scans')
+          .insert({
+            user_id: user.id,
+            scan_type: 'single_storefront',
+            storefront_id: storefrontId,
+            storefront_name: storefront.name,
+            status: 'running',
+            metadata: {
+              exchange_rate: EUR_TO_GBP_RATE,
+              marketplaces: Object.keys(MARKETPLACES)
+            }
+          })
+          .select()
+          .single();
+
+        if (scanError || !scan) {
+          console.error('Scan creation error:', scanError);
+          sendMessage({ type: 'error', data: { error: `Failed to create scan record: ${scanError?.message || 'Unknown error'}` } });
+          return;
+        }
+
+        scanId = scan.id;
+        sendMessage({ type: 'progress', data: { step: 'Scan started...', progress: 2, scanId } });
+
         // First get the total count
         const { count: totalCount } = await supabase
           .from('products')
           .select('*', { count: 'exact', head: true })
           .eq('storefront_id', storefrontId);
         
+        console.log(`Found ${totalCount} products for storefront ${storefrontId}`);
+        
         sendMessage({ 
           type: 'progress', 
-          data: { step: `Fetching ${totalCount} products...`, progress: 5 } 
+          data: { step: `Fetching ${totalCount || 0} products...`, progress: 5 } 
         });
 
         // Fetch all products without limit
-        const { data: products } = await supabase
+        const { data: products, error: productsError } = await supabase
           .from('products')
           .select('*')
           .eq('storefront_id', storefrontId)
           .order('created_at', { ascending: false });
 
+        if (productsError) {
+          console.error('Error fetching products:', productsError);
+          sendMessage({ type: 'error', data: { error: `Database error: ${productsError.message}` } });
+          return;
+        }
+
         if (!products || products.length === 0) {
-          sendMessage({ type: 'error', data: { error: 'No products found' } });
+          console.log(`No products found for storefront ${storefrontId}. Products:`, products);
+          sendMessage({ type: 'error', data: { error: 'No products found. Please sync products first.' } });
+          
+          // Update scan status to failed
+          if (scanId) {
+            await supabase
+              .from('arbitrage_scans')
+              .update({
+                status: 'failed',
+                error_message: 'No products found',
+                completed_at: new Date().toISOString()
+              })
+              .eq('id', scanId);
+          }
+          
           return;
         }
         
@@ -335,9 +385,38 @@ export async function POST(request: NextRequest) {
                     }
                   }
 
-                  // If profitable, send opportunity immediately
+                  // If profitable, save and send opportunity
                   if (bestOpportunity && bestOpportunity.profit > 0) {
                     opportunitiesFound++;
+                    
+                    // Save opportunity to database
+                    if (scanId) {
+                      await supabase
+                        .from('arbitrage_opportunities')
+                        .insert({
+                          scan_id: scanId,
+                          asin,
+                          product_name: product.product_name || asin,
+                          product_image: product.image_link || '',
+                          target_price: ukPrice,
+                          amazon_fees: amazonFees,
+                          referral_fee: referralFee,
+                          digital_services_fee: digitalServicesFee,
+                          uk_competitors: ukCompetitors,
+                          uk_sales_rank: ukSalesRank,
+                          best_source_marketplace: bestOpportunity.marketplace,
+                          best_source_price: bestOpportunity.sourcePrice,
+                          best_source_price_gbp: bestOpportunity.sourcePriceGBP,
+                          best_profit: bestOpportunity.profit,
+                          best_roi: bestOpportunity.roi,
+                          all_marketplace_prices: { euPrices },
+                          storefronts: [{ 
+                            id: storefront.id, 
+                            name: storefront.name, 
+                            seller_id: storefront.seller_id 
+                          }]
+                        });
+                    }
                     
                     const opportunity = {
                       asin,
@@ -503,17 +582,45 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // Update scan record with completion status
+        if (scanId) {
+          await supabase
+            .from('arbitrage_scans')
+            .update({
+              status: 'completed',
+              total_products: products.length,
+              unique_asins: products.length, // For single storefront, all are unique
+              opportunities_found: opportunitiesFound,
+              completed_at: new Date().toISOString()
+            })
+            .eq('id', scanId);
+        }
+
         sendMessage({ 
           type: 'complete', 
           data: { 
             totalProducts: products.length,
             opportunitiesFound,
-            message: `Analysis complete! Analyzed all ${products.length} products and found ${opportunitiesFound} profitable opportunities.`
+            message: `Analysis complete! Analysed all ${products.length} products and found ${opportunitiesFound} profitable opportunities.`,
+            scanId
           } 
         });
 
       } catch (error: any) {
         console.error('Streaming analysis error:', error);
+        
+        // Update scan record with error status
+        if (scanId) {
+          await supabase
+            .from('arbitrage_scans')
+            .update({
+              status: 'failed',
+              error_message: error.message || 'Analysis failed',
+              completed_at: new Date().toISOString()
+            })
+            .eq('id', scanId);
+        }
+        
         sendMessage({ 
           type: 'error', 
           data: { error: error.message || 'Analysis failed' } 

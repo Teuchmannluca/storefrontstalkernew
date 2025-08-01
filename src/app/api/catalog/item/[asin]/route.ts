@@ -3,7 +3,7 @@ import { SPAPICatalogClient } from '@/lib/sp-api-catalog';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { asin: string } }
+  { params }: { params: Promise<{ asin: string }> }
 ) {
   try {
     // Verify authentication
@@ -12,7 +12,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const asin = params.asin;
+    const { asin } = await params;
     
     // Validate ASIN format
     if (!/^[A-Z0-9]{10}$/.test(asin)) {

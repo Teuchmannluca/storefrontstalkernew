@@ -18,7 +18,8 @@ import {
   Squares2X2Icon,
   ListBulletIcon,
   FunnelIcon,
-  ChevronDownIcon
+  ChevronDownIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline'
 import { Menu, Transition } from '@headlessui/react'
 import { Fragment } from 'react'
@@ -46,6 +47,7 @@ export default function StorefrontsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [sortBy, setSortBy] = useState<SortOption>('date')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+  const [isUpdatingAll, setIsUpdatingAll] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -108,6 +110,44 @@ export default function StorefrontsPage() {
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/')
+  }
+
+  const handleUpdateAllStorefronts = async () => {
+    if (isUpdatingAll) return
+    
+    const confirmUpdate = confirm(`This will update all ${storefronts.length} storefronts. The process will take approximately ${storefronts.length * 3} minutes. Continue?`)
+    if (!confirmUpdate) return
+
+    setIsUpdatingAll(true)
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      const response = await fetch('/api/storefronts/update-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        }
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to start update process')
+      }
+
+      const result = await response.json()
+      alert(result.message || 'Update process started. This will run in the background.')
+      
+      // Refresh storefronts after a delay
+      setTimeout(() => {
+        fetchStorefronts()
+      }, 5000)
+    } catch (error) {
+      console.error('Error updating storefronts:', error)
+      alert('Failed to start update process')
+    } finally {
+      setIsUpdatingAll(false)
+    }
   }
 
   // Filter storefronts based on search
@@ -300,6 +340,16 @@ export default function StorefrontsPage() {
                   </Menu.Items>
                 </Transition>
               </Menu>
+
+              {/* Update All Button */}
+              <button 
+                onClick={handleUpdateAllStorefronts}
+                disabled={isUpdatingAll || storefronts.length === 0}
+                className="inline-flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-xl font-medium hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ArrowPathIcon className={`w-5 h-5 ${isUpdatingAll ? 'animate-spin' : ''}`} />
+                {isUpdatingAll ? 'Updating...' : 'Update All'}
+              </button>
 
               {/* Add Button */}
               <button 

@@ -21,7 +21,7 @@ export function useProductSync() {
     setSyncing(true)
     setSyncStatus(prev => ({
       ...prev,
-      [storefrontId]: { success: false, message: 'Syncing...' }
+      [storefrontId]: { success: false, message: 'Synchronising...' }
     }))
 
     try {
@@ -56,7 +56,7 @@ export function useProductSync() {
         if (response.status === 429 && data.waitTimeSeconds) {
           throw new Error(`Rate limit reached. Please wait ${data.waitTimeSeconds} seconds before trying again.`)
         }
-        throw new Error(data.error || 'Failed to sync products')
+        throw new Error(data.error || 'Failed to synchronise products')
       }
 
       const result: SyncResult = {
@@ -75,7 +75,7 @@ export function useProductSync() {
     } catch (error: any) {
       const result: SyncResult = {
         success: false,
-        message: 'Sync failed',
+        message: 'Synchronisation failed',
         error: error.message
       }
 

@@ -86,8 +86,9 @@ export async function POST(request: NextRequest) {
     const existingAsins = new Set(existingProducts?.map(p => p.asin) || []);
     const newAsins = asins.filter(asin => !existingAsins.has(asin));
 
-    let productsAdded = 0;
-    let productsWithDetails = 0;
+    // Initialize counters
+    let totalProductsAdded = 0;
+    let totalProductsWithDetails = 0;
 
     // Step 5: Fetch product details from SP-API if we have new ASINs
     if (newAsins.length > 0) {
@@ -111,19 +112,33 @@ export async function POST(request: NextRequest) {
 
       const catalogClient = new SPAPICatalogClient(credentials, spApiConfig);
       
-      // Process ASINs one by one to respect rate limits
-      // SP-API Catalog Items allows 2 requests per second with burst of 6
-      const productsToInsert = [];
+      // Add initial delay to warm up the API connection
+      console.log('Warming up SP-API connection...');
+      await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second initial delay
+      
+      // Process ASINs in smaller batches to avoid hitting rate limits
+      // SP-API Catalog Items allows 2 requests per second with burst of 2
       let consecutiveErrors = 0;
       const maxConsecutiveErrors = 3;
+      const batchSize = 20; // Process 20 ASINs at a time
+      const delayBetweenBatches = 5000; // 5 seconds between batches
+      let rateLimitWaitTime = 60000; // Initial wait time for rate limits (1 minute)
       
-      for (let i = 0; i < newAsins.length; i++) {
-        const asin = newAsins[i];
-        console.log(`Processing ASIN ${i + 1}/${newAsins.length}: ${asin}`);
+      // Process in batches
+      for (let batchStart = 0; batchStart < newAsins.length; batchStart += batchSize) {
+        const batch = newAsins.slice(batchStart, Math.min(batchStart + batchSize, newAsins.length));
+        console.log(`Processing batch ${Math.floor(batchStart / batchSize) + 1}/${Math.ceil(newAsins.length / batchSize)} (${batch.length} ASINs)`);
         
-        try {
-          // The rate limiter in catalogClient will handle the timing
-          const startTime = Date.now();
+        const batchProductsToInsert = [];
+        
+        for (let i = 0; i < batch.length; i++) {
+          const asin = batch[i];
+          const globalIndex = batchStart + i + 1;
+          console.log(`Processing ASIN ${globalIndex}/${newAsins.length}: ${asin}`);
+          
+          try {
+            // The rate limiter in catalogClient will handle the timing
+            const startTime = Date.now();
           
           const catalogItem = await catalogClient.getCatalogItem(
             asin,
@@ -141,10 +156,10 @@ export async function POST(request: NextRequest) {
                            marketplaceData.images[0]?.link || 
                            null;
 
-          productsWithDetails++;
+          totalProductsWithDetails++;
           consecutiveErrors = 0; // Reset error counter on success
           
-          productsToInsert.push({
+          batchProductsToInsert.push({
             storefront_id: storefrontId,
             seller_id: sellerId,
             asin: asin,
@@ -156,52 +171,88 @@ export async function POST(request: NextRequest) {
             updated_at: new Date().toISOString()
           });
 
-          const elapsed = Date.now() - startTime;
-          console.log(`✓ Fetched ${asin} in ${elapsed}ms`);
+            const elapsed = Date.now() - startTime;
+            console.log(`✓ Fetched ${asin} in ${elapsed}ms`);
+            
+          } catch (error: any) {
+            console.error(`Error fetching details for ASIN ${asin}:`, error.message);
+            consecutiveErrors++;
+            
+            // Check for specific rate limit error or quota exceeded
+            const isRateLimitError = error.response?.status === 429 || 
+                                   error.message?.includes('429') || 
+                                   error.message?.includes('Too Many Requests') ||
+                                   error.message?.includes('QuotaExceeded') ||
+                                   error.message?.includes('You exceeded your quota');
+            
+            if (isRateLimitError) {
+              console.log(`Rate limit/quota exceeded! Waiting ${rateLimitWaitTime / 1000} seconds before retrying...`);
+              await new Promise(resolve => setTimeout(resolve, rateLimitWaitTime));
+              
+              // Exponential backoff: double the wait time for next rate limit
+              rateLimitWaitTime = Math.min(rateLimitWaitTime * 2, 300000); // Max 5 minutes
+              consecutiveErrors = 0;
+              
+              // Retry the same ASIN
+              i--; // Decrement to retry this ASIN
+              continue;
+            } else if (consecutiveErrors >= maxConsecutiveErrors) {
+              console.log(`Too many consecutive errors (${consecutiveErrors}), waiting 60 seconds...`);
+              await new Promise(resolve => setTimeout(resolve, 60000)); // Wait 60 seconds
+              consecutiveErrors = 0;
+            }
+            
+            // Reset rate limit wait time on non-rate-limit errors
+            if (!isRateLimitError && consecutiveErrors === 0) {
+              rateLimitWaitTime = 60000; // Reset to 1 minute
+            }
           
-        } catch (error: any) {
-          console.error(`Error fetching details for ASIN ${asin}:`, error.message);
-          consecutiveErrors++;
-          
-          // If we hit rate limits or have too many errors, slow down
-          if (error.message?.includes('429') || consecutiveErrors >= maxConsecutiveErrors) {
-            console.log('Rate limit detected or too many errors, waiting 60 seconds...');
-            await new Promise(resolve => setTimeout(resolve, 60000)); // Wait 1 minute
-            consecutiveErrors = 0;
+            // Still insert the product with just the ASIN
+            batchProductsToInsert.push({
+              storefront_id: storefrontId,
+              seller_id: sellerId,
+              asin: asin,
+              product_name: asin,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            });
           }
           
-          // Still insert the product with just the ASIN
-          productsToInsert.push({
-            storefront_id: storefrontId,
-            seller_id: sellerId,
-            asin: asin,
-            product_name: asin,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          });
+          // Delay between requests to respect rate limits
+          // Amazon allows 2 req/sec, so 500ms delay = 2 req/sec
+          // Extra delay for first few requests to avoid initial quota issues
+          const delay = globalIndex <= 5 ? 1500 : 500; // 1.5 seconds for first 5 requests, then 500ms
+          if (i < batch.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
         }
         
-        // Progress update every 10 products
-        if ((i + 1) % 10 === 0) {
-          console.log(`Progress: ${i + 1}/${newAsins.length} ASINs processed`);
+        // Save this batch to Supabase
+        if (batchProductsToInsert.length > 0) {
+          console.log(`Saving ${batchProductsToInsert.length} products from this batch to database...`);
+          
+          const { data: insertedProducts, error: insertError } = await supabase
+            .from('products')
+            .insert(batchProductsToInsert)
+            .select();
+
+          if (insertError) {
+            console.error('Error inserting batch products:', insertError);
+          } else {
+            const batchAdded = insertedProducts?.length || 0;
+            totalProductsAdded += batchAdded;
+            console.log(`✓ Batch saved: ${batchAdded} products added to database`);
+          }
+        }
+        
+        // Delay between batches
+        if (batchStart + batchSize < newAsins.length) {
+          console.log(`Batch complete. Waiting ${delayBetweenBatches / 1000} seconds before next batch...`);
+          await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
         }
       }
 
-      // Insert all products with their details
-      const { data: insertedProducts, error: insertError } = await supabase
-        .from('products')
-        .insert(productsToInsert)
-        .select();
-
-      if (insertError) {
-        console.error('Error inserting products:', insertError);
-        return NextResponse.json(
-          { error: 'Failed to insert products', details: insertError },
-          { status: 500 }
-        );
-      } else {
-        productsAdded = insertedProducts?.length || 0;
-      }
+      console.log(`\n✅ All batches completed successfully!`);
     }
 
     return NextResponse.json({
@@ -212,9 +263,9 @@ export async function POST(request: NextRequest) {
       },
       totalAsins: asins.length,
       existingAsins: existingAsins.size,
-      productsAdded,
-      productsWithDetails,
-      message: `Successfully fetched ${asins.length} ASINs. Added ${productsAdded} new products (${productsWithDetails} with full details).`
+      productsAdded: totalProductsAdded,
+      productsWithDetails: totalProductsWithDetails,
+      message: `Successfully fetched ${asins.length} ASINs. Added ${totalProductsAdded} new products (${totalProductsWithDetails} with full details).`
     });
 
   } catch (error) {

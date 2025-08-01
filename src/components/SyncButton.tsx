@@ -43,7 +43,7 @@ export default function SyncButton({
           onSyncComplete()
         }
       } else {
-        setStatus(result.error || 'Sync failed')
+        setStatus(result.error || 'Synchronisation failed')
       }
 
       // Clear status after 5 seconds

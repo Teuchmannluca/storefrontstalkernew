@@ -7,209 +7,119 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 A sophisticated Amazon arbitrage analysis platform that tracks storefronts, analyzes products across European marketplaces, and identifies profitable cross-border opportunities. Built with Next.js, Supabase, and extensive Amazon SP-API integration.
 
-## Tech Stack & Architecture
-- **Frontend**: Next.js 14 (App Router), React 18, TypeScript
-- **Styling**: Tailwind CSS with violet/indigo gradient theme
-- **Database**: Supabase (PostgreSQL) with Row Level Security (RLS)
-- **Authentication**: Supabase Auth with JWT validation
-- **APIs**: Amazon SP-API, Keepa API, real-time exchange rates
-- **Testing**: Playwright for E2E testing
-- **UI Components**: Headless UI, Heroicons
-
-## Core Business Logic
-This is an **Amazon arbitrage analysis tool** that:
-1. Tracks Amazon storefronts by seller ID across EU markets
-2. Fetches product data using Amazon SP-API and Keepa
-3. Calculates fees, shipping costs, and profit margins
-4. Identifies arbitrage opportunities between EU → UK markets
-5. Provides real-time competitive pricing analysis
-
-## Project Structure
-```
-/src
-  /app
-    /api                    # 28+ API endpoints for data processing
-      /arbitrage           # Cross-marketplace arbitrage analysis
-      /catalog            # Amazon catalog search endpoints  
-      /fees               # SP-API fee calculation endpoints
-      /pricing            # Competitive pricing APIs
-      /products           # Product CRUD and sync operations
-      /sync               # Background sync job endpoints
-    /dashboard            # Protected dashboard pages
-      /a2a-eu            # Amazon-to-Amazon EU arbitrage page
-      /products          # Product management interface
-      /storefronts       # Storefront management page
-    page.tsx            # Login-only landing page
-    layout.tsx          # Root layout with auth guards
-    globals.css         # Tailwind theme (violet/indigo gradients)
-  
-  /components           # Reusable UI components
-    Sidebar.tsx         # Navigation (Dashboard, Storefronts, Products, A2A EU)
-    AddStorefrontModal.tsx  # Storefront creation modal
-    Various sync components with status indicators
-  
-  /lib
-    supabase.ts         # Supabase client with auth
-    amazon-sp-api.ts    # SP-API client with rate limiting
-    keepa-api.ts        # Keepa API integration
-  
-  /utils                # Business logic utilities
-    fee-calculator.ts   # Amazon fee calculations
-    arbitrage-analyzer.ts # Profit margin analysis
-
-/supabase
-  create_tables.sql     # Database schema with RLS policies
-```
-
-## Database Architecture
-### Core Tables with RLS
-1. **Storefronts** - User's tracked Amazon seller storefronts
-   - Links to Products with cascade delete
-   - Auto-generates marketplace URLs for EU markets
-   
-2. **Products** - Product data linked to storefronts
-   - ASIN, title, image, brand, sales ranks (JSONB)
-   - Sync status tracking (pending/syncing/success/error)
-   - Last synced timestamps and error logging
-   
-3. **Arbitrage Opportunities** (if implemented)
-   - Cross-marketplace pricing analysis
-   - Profit calculations with fees and shipping
-   - ROI and margin percentages
-
-### Key Features
-- **Row Level Security (RLS)** - Complete user data isolation
-- **JSONB Storage** - Flexible sales rank and metadata storage
-- **Cascade Deletes** - Automatic cleanup of related data
-- **Comprehensive Indexing** - Optimized for ASIN, profit, marketplace queries
-
-## Key Architectural Patterns
-
-### API Integration Architecture
-- **Amazon SP-API Clients**: Product catalog, competitive pricing, fees calculation
-- **Rate Limiting**: Built-in throttling with retry mechanisms for SP-API compliance
-- **AWS STS Integration**: Role-based credential management for SP-API access
-- **Keepa API**: Alternative product data source with custom rate limiting
-- **Background Sync**: Scheduled product data updates with status tracking
-
-### Authentication & Security
-- **Supabase Auth**: JWT-based authentication with automatic token refresh
-- **API Route Protection**: Bearer token validation in all API endpoints
-- **Row Level Security**: Database-level user isolation
-- **Service Role Access**: Server-side operations with elevated permissions
-
-### Data Flow Patterns
-1. **Storefront → Product Discovery**: Keepa API extracts ASINs from seller pages
-2. **Background Sync**: SP-API fetches product details, images, sales ranks
-3. **Arbitrage Analysis**: Real-time cross-marketplace price comparison with fee calculations
-4. **Profit Optimization**: ROI and margin calculations with currency conversion
-
-### Component Architecture
-- **Modal System**: Reusable modals for storefront/product management
-- **Sync Status Components**: Real-time sync progress indicators
-- **Search & Filter**: ASIN validation and product search across storefronts
-- **Responsive Design**: Mobile-first with violet/indigo gradient theme
-
 ## Development Commands
 ```bash
-npm run dev              # Development server (localhost:3000 or 3001)
+npm run dev              # Development server (localhost:3000)
 npm run build            # Production build with type checking
 npm run start            # Production server
 npm run lint             # ESLint with Next.js rules
 npm run test             # Playwright E2E tests (cross-browser)
-npm run test:sp-api      # Test Amazon SP-API connection and credentials
-npm run sync:catalog     # Manual catalog sync (if implemented)
+npm run test:ui          # Playwright tests with UI mode
+npm run test:headed      # Playwright tests in headed browser
+npm run test:sp-api      # Test Amazon SP-API connection
 ```
 
-## API Testing & Development
-```bash
-# Test SP-API credentials and marketplace access
-curl -X POST http://localhost:3000/api/sp-api/test \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+## Key Architecture Decisions
 
-# Trigger arbitrage analysis for a storefront
-curl -X POST http://localhost:3000/api/arbitrage/analyze \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"storefrontId": "uuid-here"}'
+### Rate Limiting Strategy
+- **Amazon SP-API Rate Limits**: 
+  - getCatalogItem: 2 requests/second (burst: 2)
+  - searchCatalogItems: 2 requests/second (burst: 2)
+  - getCompetitivePricing: 10 requests/second (burst: 30)
+  - getMyFeesEstimate: 1 request/second (burst: 2)
+- Implementation uses custom rate limiter with token bucket algorithm
+- Automatic retry with exponential backoff on rate limit errors
 
-# Manual product sync
-curl -X POST http://localhost:3000/api/sync/products \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+### Database Migration Patterns
+- Use `CREATE TABLE IF NOT EXISTS` for new tables
+- Use `CREATE INDEX IF NOT EXISTS` to avoid conflicts
+- Backup existing tables before structural changes
+- RLS policies should be dropped and recreated to ensure consistency
+
+### Streaming API Architecture
+- Server-sent events (SSE) for real-time arbitrage analysis updates
+- Stream messages format: `data: {type, data}\n\n`
+- Message types: `progress`, `opportunity`, `complete`, `error`
+- Client-side error handling must not throw to maintain stream
+
+### Authentication Flow
+- All API routes require Bearer token in Authorization header
+- Supabase JWT validation on every request
+- Service role key used for server-side operations only
+- Row Level Security ensures complete user data isolation
+
+## Critical Implementation Details
+
+### Product Sync Flow
+1. **Keepa API** fetches ASINs from seller storefront (50 tokens per page)
+2. **Batch Processing**: Process 20 ASINs at a time with SP-API
+3. **Rate Limiting**: 500ms delay between requests (1.5s for first 5)
+4. **Error Recovery**: Exponential backoff starting at 60s for quota errors
+
+### Arbitrage Analysis
+1. **Data Collection**: Fetch pricing from all EU marketplaces
+2. **Fee Calculation**: UK Amazon fees + 2% digital services fee
+3. **Currency Conversion**: EUR to GBP at 0.86 rate
+4. **Opportunity Detection**: Profit > 0 and positive ROI
+5. **Scan Persistence**: All scans saved to database for history
+
+### British English Localization
+- analyse (not analyze)
+- synchronise (not synchronize)
+- catalogue (not catalog)
+- colour (not color)
+- optimise (not optimize)
+
+## Database Schema Updates
+
+### Arbitrage Scan Tables (Required)
+```sql
+-- Check if tables exist before running migrations
+-- Use migrate_arbitrage_tables.sql if upgrading from old structure
+-- Tables: arbitrage_scans, arbitrage_opportunities
+-- All have RLS policies for user isolation
 ```
 
-## Environment Variables
-Critical for full functionality - store in `.env.local`:
+### Common Issues & Solutions
 
-### Supabase Configuration
-```bash
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key  # Server-side operations
-```
+1. **"Failed to create scan record"**
+   - Run `migrate_arbitrage_tables.sql` in Supabase SQL editor
+   - Ensures arbitrage_scans and arbitrage_opportunities tables exist
 
-### Amazon SP-API Credentials (Required for arbitrage analysis)
-```bash
-AMAZON_ACCESS_KEY_ID=your-sp-api-client-id
-AMAZON_SECRET_ACCESS_KEY=your-sp-api-client-secret
-AMAZON_REFRESH_TOKEN=your-long-lived-refresh-token
-AMAZON_SELLER_ID=your-seller-or-solution-id
-AMAZON_MARKETPLACE_ID=A1F83G8C2ARO7P  # UK marketplace
-AMAZON_REGION=eu-west-1
-```
+2. **Rate Limit Errors**
+   - SP-API has strict rate limits (2 req/sec for catalog)
+   - Implementation includes automatic retry with backoff
+   - First 5 requests use 1.5s delay to avoid initial burst
 
-### AWS IAM Credentials (Required for SP-API access)
-```bash
-AWS_ACCESS_KEY_ID=your-iam-access-key
-AWS_SECRET_ACCESS_KEY=your-iam-secret-key
-AWS_REGION=eu-west-1
-```
+3. **No Products Found**
+   - Must sync products before analysis
+   - Keepa API required for initial ASIN discovery
+   - Check storefront has valid seller_id
+
+## Environment Variables (Required)
+All stored in `.env.local`:
+
+### Supabase
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+### Amazon SP-API
+- `AMAZON_ACCESS_KEY_ID` (Client ID)
+- `AMAZON_SECRET_ACCESS_KEY` (Client Secret)
+- `AMAZON_REFRESH_TOKEN`
+- `AMAZON_MARKETPLACE_ID` (UK: A1F83G8C2ARO7P)
+
+### AWS IAM
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION` (eu-west-1)
 
 ### External APIs
-```bash
-KEEPA_API_KEY=your-keepa-api-key  # Product discovery
-EXCHANGE_RATE_API_KEY=your-api-key  # Currency conversion (optional)
-```
+- `KEEPA_API_KEY`
 
-### Background Processing
-```bash
-SYNC_SECRET_TOKEN=your-secret-token  # Secure sync endpoints
-NEXT_PUBLIC_SYNC_ENABLED=true  # Enable auto-sync features
-```
-
-## SP-API Integration
-### Product Details by ASIN
-Fetch product information using Amazon's SP-API:
-- **Endpoint**: `/api/products/[asin]`
-- **Data Retrieved**:
-  - Main product image
-  - Product name/title
-  - Sales rank (by category)
-  - Brand name
-- **Required Credentials**:
-  - SP-API Access Key ID
-  - SP-API Secret Access Key
-  - Refresh Token
-  - Client ID & Client Secret
-  - Marketplace ID (UK: A1F83G8C2ARO7P)
-
-### Background Product Sync
-Automatic synchronization of product data:
-- **Sync Endpoint**: `/api/sync/products`
-- **Features**:
-  - Automatic sync on product addition
-  - Periodic batch sync (every 6 hours)
-  - Manual sync trigger via API
-  - Sync status tracking in database
-- **Database Fields**:
-  - sync_status: pending, syncing, success, error
-  - last_synced_at: Timestamp of last successful sync
-  - sync_error: Error message if sync failed
-
-## Future Enhancements
-- Product tracking per storefront
-- Price change monitoring
-- Analytics dashboard
-- Bulk import/export functionality
-- Multi-region Amazon support
-- Automated data fetching
+## Testing Strategy
+- Playwright for E2E tests in `/tests` directory
+- Tests run on Chromium, Firefox, and WebKit
+- Development server auto-starts for tests
+- Use `npm run test:ui` for interactive debugging

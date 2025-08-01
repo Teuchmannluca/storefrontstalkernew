@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { asin: string } }
+  { params }: { params: Promise<{ asin: string }> }
 ) {
   try {
     // Verify user is authenticated
@@ -14,7 +14,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const asin = params.asin;
+    const { asin } = await params;
     
     // Validate ASIN format (basic validation)
     if (!asin || !/^[A-Z0-9]{10}$/.test(asin)) {

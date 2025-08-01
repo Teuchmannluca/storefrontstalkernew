@@ -9,13 +9,15 @@ import {
   ArrowRightStartOnRectangleIcon,
   PlusIcon,
   CubeIcon,
-  GlobeEuropeAfricaIcon
+  GlobeEuropeAfricaIcon,
+  MagnifyingGlassIcon
 } from '@heroicons/react/24/outline'
 import { 
   HomeIcon as HomeIconSolid,
   BuildingStorefrontIcon as BuildingStorefrontIconSolid,
   CubeIcon as CubeIconSolid,
-  GlobeEuropeAfricaIcon as GlobeEuropeAfricaIconSolid
+  GlobeEuropeAfricaIcon as GlobeEuropeAfricaIconSolid,
+  MagnifyingGlassIcon as MagnifyingGlassIconSolid
 } from '@heroicons/react/24/solid'
 
 interface SidebarProps {
@@ -28,6 +30,7 @@ const navigation = [
   { name: 'Storefronts', href: '/dashboard/storefronts', icon: BuildingStorefrontIcon, iconActive: BuildingStorefrontIconSolid },
   { name: 'All Products', href: '/dashboard/products', icon: CubeIcon, iconActive: CubeIconSolid },
   { name: 'A2A EU', href: '/dashboard/a2a-eu', icon: GlobeEuropeAfricaIcon, iconActive: GlobeEuropeAfricaIconSolid },
+  { name: 'ASIN Checker', href: '/dashboard/asin-checker', icon: MagnifyingGlassIcon, iconActive: MagnifyingGlassIconSolid },
 ]
 
 export default function Sidebar({ onSignOut, onAddStorefront }: SidebarProps) {

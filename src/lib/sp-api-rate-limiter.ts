@@ -73,9 +73,10 @@ export class SPAPIRateLimiter {
 }
 
 // Create singleton instances for different SP-API operations
+// getCatalogItem: 2 requests/sec, burst capacity: 2
 export const catalogAPIRateLimiter = new SPAPIRateLimiter({
   requestsPerSecond: 2,
-  burstCapacity: 6
+  burstCapacity: 2
 });
 
 export const ordersAPIRateLimiter = new SPAPIRateLimiter({

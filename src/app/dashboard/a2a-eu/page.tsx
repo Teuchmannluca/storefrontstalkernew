@@ -567,7 +567,7 @@ export default function A2AEUPage() {
           <div className="mb-8">
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">A2A Europe Arbitrage</h1>
+                <h1 className="text-3xl font-bold text-gray-900 mb-2">A2A EU Deals</h1>
                 <p className="text-gray-600">Find profitable Amazon UK to EU arbitrage opportunities</p>
               </div>
               <button
@@ -834,7 +834,7 @@ export default function A2AEUPage() {
               {/* Summary Header */}
               <div className="bg-gradient-to-r from-violet-500 to-indigo-500 rounded-2xl p-6 text-white">
                 <h2 className="text-2xl font-bold mb-4">
-                  Arbitrage Opportunities 
+                  Deals 
                   {analyzing && <span className="text-violet-200">(Live Updates)</span>}
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
