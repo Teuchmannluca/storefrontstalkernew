@@ -281,8 +281,9 @@ export async function POST(request: NextRequest) {
             }
             
             const totalUKFees = referralFee + fbaFee + variableClosingFee + otherFees;
-            const digitalServicesFee = ukPrice * 0.02; // 2% digital services fee
-            const vatOnFees = totalUKFees * 0.20; // VAT on fees (20%) - this is a business expense
+            const digitalServicesFee = totalUKFees * 0.02; // 2% digital services fee on Amazon fees
+            const totalFeesIncludingDST = totalUKFees + digitalServicesFee;
+            const vatOnFees = totalFeesIncludingDST * 0.20; // VAT on all fees (20%) - this is a business expense
             
             console.log(`UK fees breakdown - Referral: £${referralFee}, FBA: £${fbaFee}, VCF: £${variableClosingFee}, Total: £${totalUKFees}`);
 
@@ -314,7 +315,7 @@ export async function POST(request: NextRequest) {
                   if (euPrice && euPrice > 0) {
                     const sourcePriceGBP = euPrice * EUR_TO_GBP_RATE;
                     // Total cost includes VAT on fees as it's a real business expense
-                    const totalCost = sourcePriceGBP + totalUKFees + digitalServicesFee + vatOnFees;
+                    const totalCost = sourcePriceGBP + totalFeesIncludingDST + vatOnFees;
                     const profit = ukPrice - totalCost;
                     const profitMargin = (profit / ukPrice) * 100;
                     const roi = (profit / sourcePriceGBP) * 100; // ROI should be based on source price, not total cost

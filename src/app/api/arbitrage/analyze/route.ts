@@ -267,7 +267,7 @@ export async function POST(request: NextRequest) {
           let amazonFees = 0;
           let referralFee = 0;
           let fbaFee = 0;
-          let digitalServicesFee = ukPrice * 0.02;
+          let digitalServicesFee = 0; // Will be calculated after getting Amazon fees
 
           try {
             console.log(`Calculating fees for ${asin}...`);
@@ -289,6 +289,9 @@ export async function POST(request: NextRequest) {
               referralFee = feeDetails.find(f => f.feeType === 'ReferralFee')?.finalFee.amount || 0;
               fbaFee = feeDetails.find(f => f.feeType.includes('FBA'))?.finalFee.amount || 0;
               amazonFees = fees.totalFeesEstimate?.amount || 0;
+              
+              // Calculate DST as 2% of Amazon fees
+              digitalServicesFee = amazonFees * 0.02;
               
               console.log(`${asin} fees calculated:`, {
                 amazonFees: amazonFees.toFixed(2),

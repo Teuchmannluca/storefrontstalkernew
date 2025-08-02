@@ -351,7 +351,7 @@ export async function POST(request: NextRequest) {
                   
                   const referralFee = feeDetails.find(f => f.feeType === 'ReferralFee')?.finalFee.amount || 0;
                   const amazonFees = fees.totalFeesEstimate?.amount || 0;
-                  const digitalServicesFee = ukPrice * 0.02;
+                  const digitalServicesFee = amazonFees * 0.02; // 2% of Amazon fees
 
                   // Check EU prices
                   const euPrices: any[] = [];
@@ -470,7 +470,7 @@ export async function POST(request: NextRequest) {
                       
                       const referralFee = feeDetails.find(f => f.feeType === 'ReferralFee')?.finalFee.amount || 0;
                       const amazonFees = fees.totalFeesEstimate?.amount || 0;
-                      const digitalServicesFee = ukPrice * 0.02;
+                      const digitalServicesFee = amazonFees * 0.02; // 2% of Amazon fees
 
                       // Process EU prices
                       const euPrices: any[] = [];

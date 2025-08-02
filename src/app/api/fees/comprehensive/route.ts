@@ -200,22 +200,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Digital Services Tax is 2% of the item price (UK specific)
+    // Total Amazon fees (before DST)
+    const totalAmazonFees = referralFee + fbaFulfillmentFee + variableClosingFee + fixedClosingFee + otherFees;
+    
+    // Digital Services Tax is 2% of the Amazon fees (UK specific)
     // Only calculate if not returned by SP-API
     if (digitalServicesFee === 0) {
-      digitalServicesFee = sellPrice * DIGITAL_SERVICES_FEE_RATE;
+      digitalServicesFee = totalAmazonFees * DIGITAL_SERVICES_FEE_RATE;
     }
-
-    // Total Amazon fees (excluding DST which is paid separately)
-    const totalAmazonFees = referralFee + fbaFulfillmentFee + variableClosingFee + fixedClosingFee + otherFees;
 
 // VAT Calculations
     let vatOnFees = 0;
     let vatOnSale = 0;
     
     if (isVatRegistered) {
-      // VAT on Amazon fees (reclaimable input VAT - this IS a business expense)
-      vatOnFees = totalAmazonFees * UK_VAT_RATE;
+      // VAT on total fees including DST (reclaimable input VAT - this IS a business expense)
+      vatOnFees = (totalAmazonFees + digitalServicesFee) * UK_VAT_RATE;
       
       // VAT on sale (output VAT - NOT a business expense, just collected for HMRC)
       if (pricesIncludeVat) {
@@ -226,8 +226,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Profit calculation - VAT on sale does NOT affect profit
-    // PROFIT = SALE PRICE - AMAZON FEES - DIGITAL SERVICES TAX - COST OF GOODS - VAT ON FEES
-    const netProfit = sellPrice - totalAmazonFees - digitalServicesFee - costPrice - vatOnFees;
+    // Total fees include Amazon fees + DST
+    const totalFeesIncludingDST = totalAmazonFees + digitalServicesFee;
+    
+    // PROFIT = SALE PRICE - TOTAL FEES (inc DST) - COST OF GOODS - VAT ON FEES
+    const netProfit = sellPrice - totalFeesIncludingDST - costPrice - vatOnFees;
     
     // Alternative calculations for reporting
     const grossRevenue = sellPrice;
@@ -294,7 +297,7 @@ export async function POST(request: NextRequest) {
         fixedClosingFee,
         digitalServicesFee,
         otherFees,
-        totalAmazonFees,
+        totalAmazonFees: totalAmazonFees + digitalServicesFee, // Total including DST
         breakdown: feeDetails.map(fee => ({
           type: fee.feeType,
           amount: fee.finalFee.amount,
@@ -312,7 +315,7 @@ export async function POST(request: NextRequest) {
         grossRevenue,
         netRevenue,
         netRevenueAfterVat: netRevenue - vatOnSale, // For information only
-        totalCosts: costPrice + totalAmazonFees + digitalServicesFee + vatOnFees,
+        totalCosts: costPrice + totalFeesIncludingDST + vatOnFees,
         grossProfit: sellPrice - costPrice,
         netProfit,
         totalProfit: netProfit,

@@ -371,14 +371,14 @@ export async function POST(request: NextRequest) {
                   }
                   
                   // Digital Services Fee - check if it's in the SP-API response
-                  // If not, we need to understand the exact calculation
                   const digitalServicesFeeFromAPI = feeDetails.find(f => 
                     f.feeType === 'DigitalServicesFee' || 
                     f.feeType === 'DigitalServiceTax' ||
                     f.feeType === 'DST'
                   )?.finalFee.amount;
                   
-                  digitalServicesFee = digitalServicesFeeFromAPI || 0;
+                  // Calculate DST as 2% of Amazon fees if not returned by API
+                  digitalServicesFee = digitalServicesFeeFromAPI || (amazonFees * 0.02);
                   
                   // VAT calculations
                   const vatRate = 0.20; // UK VAT rate
@@ -558,7 +558,7 @@ export async function POST(request: NextRequest) {
                         f.feeType === 'DST'
                       )?.finalFee.amount;
                       
-                      const digitalServicesFee = digitalServicesFeeFromAPI || 0;
+                      const digitalServicesFee = digitalServicesFeeFromAPI || (amazonFees * 0.02);
                       
                       // VAT calculations
                       const vatRate = 0.20;
