@@ -228,25 +228,21 @@ export async function POST(request: NextRequest) {
             // Log the competitive pricing structure
             console.log(`UK product competitive pricing for ${asin}:`, JSON.stringify(ukProduct.competitivePricing, null, 2));
             
-            // Extract price from competitive pricing data - handle both camelCase and PascalCase
-            const competitivePricing = ukProduct.competitivePricing || ukProduct.CompetitivePricing;
+            // Extract price from competitive pricing data
+            const competitivePricing = ukProduct.competitivePricing;
             
-            if (competitivePricing?.competitivePrices || competitivePricing?.CompetitivePrices) {
-              const competitivePrices = competitivePricing.competitivePrices || competitivePricing.CompetitivePrices;
+            if (competitivePricing?.competitivePrices) {
+              const competitivePrices = competitivePricing.competitivePrices;
               console.log(`Found ${competitivePrices.length} competitive prices`);
               
               const priceData = competitivePrices.find(
-                (cp: any) => cp.competitivePriceId === '1' || cp.CompetitivePriceId === '1'
+                (cp: any) => cp.competitivePriceId === '1'
               ) || competitivePrices[0];
               
               console.log(`Selected price data:`, JSON.stringify(priceData, null, 2));
               
-              if (priceData?.Price?.ListingPrice?.Amount) {
-                ukPrice = parseFloat(priceData.Price.ListingPrice.Amount);
-              } else if (priceData?.price?.amount) {
+              if (priceData?.price?.amount) {
                 ukPrice = priceData.price.amount;
-              } else if (priceData?.Price?.LandedPrice?.Amount) {
-                ukPrice = parseFloat(priceData.Price.LandedPrice.Amount);
               }
             }
             
@@ -328,21 +324,17 @@ export async function POST(request: NextRequest) {
                   const euProduct = euPricingData[0];
                   let euPrice = 0;
                   
-                  // Extract price from competitive pricing data - handle both camelCase and PascalCase
-                  const competitivePricing = euProduct.competitivePricing || euProduct.CompetitivePricing;
+                  // Extract price from competitive pricing data
+                  const competitivePricing = euProduct.competitivePricing;
                   
-                  if (competitivePricing?.competitivePrices || competitivePricing?.CompetitivePrices) {
-                    const competitivePrices = competitivePricing.competitivePrices || competitivePricing.CompetitivePrices;
+                  if (competitivePricing?.competitivePrices) {
+                    const competitivePrices = competitivePricing.competitivePrices;
                     const priceData = competitivePrices.find(
-                      (cp: any) => cp.competitivePriceId === '1' || cp.CompetitivePriceId === '1'
+                      (cp: any) => cp.competitivePriceId === '1'
                     ) || competitivePrices[0];
                     
-                    if (priceData?.Price?.ListingPrice?.Amount) {
-                      euPrice = parseFloat(priceData.Price.ListingPrice.Amount);
-                    } else if (priceData?.price?.amount) {
+                    if (priceData?.price?.amount) {
                       euPrice = priceData.price.amount;
-                    } else if (priceData?.Price?.LandedPrice?.Amount) {
-                      euPrice = parseFloat(priceData.Price.LandedPrice.Amount);
                     }
                   }
                   
@@ -400,10 +392,8 @@ export async function POST(request: NextRequest) {
                   fbaFee,
                   digitalServicesFee,
                   ukCompetitors: competitivePricing?.numberOfOfferListings?.find(
-                    (l: any) => l.condition === 'New' || l.Condition === 'New'
-                  )?.count || competitivePricing?.NumberOfOfferListings?.find(
-                    (l: any) => l.condition === 'New' || l.Condition === 'New'  
-                  )?.Count || 0,
+                    (l: any) => l.condition === 'New'
+                  )?.count || 0,
                   ukLowestPrice: ukPrice,
                   ukSalesRank: salesRank,
                   euPrices,
@@ -425,10 +415,8 @@ export async function POST(request: NextRequest) {
                   referral_fee: referralFee.toString(),
                   digital_services_fee: digitalServicesFee.toString(),
                   uk_competitors: competitivePricing?.numberOfOfferListings?.find(
-                    (l: any) => l.condition === 'New' || l.Condition === 'New'
-                  )?.count || competitivePricing?.NumberOfOfferListings?.find(
-                    (l: any) => l.condition === 'New' || l.Condition === 'New'
-                  )?.Count || 0,
+                    (l: any) => l.condition === 'New'
+                  )?.count || 0,
                   uk_sales_rank: salesRank,
                   best_source_marketplace: bestOpportunity.marketplace,
                   best_source_price: bestOpportunity.sourcePrice.toString(),

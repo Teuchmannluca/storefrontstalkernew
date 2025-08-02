@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
@@ -69,7 +69,7 @@ interface ArbitrageOpportunity {
 type SortOption = 'profit' | 'roi' | 'margin' | 'price'
 
 
-export default function A2AEUPage() {
+function A2AEUPageContent() {
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([])
   const [storefronts, setStorefronts] = useState<Storefront[]>([])
   const [selectedStorefront, setSelectedStorefront] = useState<Storefront | null>(null)
@@ -1610,5 +1610,13 @@ export default function A2AEUPage() {
         }}
       />
     </div>
+  )
+}
+
+export default function A2AEUPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
+      <A2AEUPageContent />
+    </Suspense>
   )
 }

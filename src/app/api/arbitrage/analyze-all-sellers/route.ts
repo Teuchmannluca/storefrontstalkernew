@@ -322,9 +322,9 @@ export async function POST(request: NextRequest) {
 
               const ukPrice = marketplacePrices.UK.price;
               const ukCompetitors = marketplacePrices.UK.numberOfOffers;
-              // Use sales rank from database first, fallback to SP-API data
-              const ukSalesRank = product.current_sales_rank || marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
-              const salesPerMonth = product.sales_per_month || 0;
+              // Use sales rank from SP-API data
+              const ukSalesRank = marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
+              const salesPerMonth = 0; // Sales per month data not available
 
               try {
                 // Ensure minimum interval between fees requests (1 request per second)

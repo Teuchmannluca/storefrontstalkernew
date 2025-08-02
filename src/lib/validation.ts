@@ -74,6 +74,11 @@ export const apiSchemas = {
     minProfitMargin: z.number().min(0).max(100).default(10),
     maxPriceGBP: z.number().positive().optional(),
   }),
+  
+  // ASIN analysis request
+  asinAnalysis: z.object({
+    asins: z.array(schemas.asin).min(1).max(50),
+  }),
 }
 
 // Input sanitization helpers

@@ -65,3 +65,15 @@ class ExchangeRateService {
 }
 
 export const exchangeRateService = new ExchangeRateService();
+
+// Export helper function for backward compatibility
+export function convertToGBP(amount: number, fromCurrency: string): number {
+  if (fromCurrency === 'GBP') {
+    return amount;
+  }
+  if (fromCurrency === 'EUR') {
+    return exchangeRateService.convertEURtoGBP(amount);
+  }
+  // Add more currencies as needed
+  throw new Error(`Unsupported currency: ${fromCurrency}`);
+}

@@ -23,6 +23,9 @@ export function estimateMonthlySalesFromRank(rank: number, category: string = 'd
   }
 }
 
+// Alias for backward compatibility
+export const estimateMonthlySales = estimateMonthlySalesFromRank;
+
 export function formatSalesEstimate(sales: number): string {
   if (sales >= 1000) {
     return `${(sales / 1000).toFixed(1)}k`;
