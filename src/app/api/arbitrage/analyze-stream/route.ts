@@ -3,6 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 import { SPAPICompetitivePricingClient } from '@/lib/sp-api-competitive-pricing';
 import { SPAPIProductFeesClient } from '@/lib/sp-api-product-fees';
 import { checkEnvVars } from '@/lib/env-check';
+import { validateApiRequest, AuthError } from '@/lib/auth';
+import { validateRequestBody, apiSchemas, ValidationError } from '@/lib/validation';
+import { sendStreamError, AppError, ErrorCategory, MonitoredError } from '@/lib/error-handling';
 
 // Marketplace IDs
 const MARKETPLACES = {
@@ -36,47 +39,39 @@ interface StreamMessage {
 }
 
 export async function POST(request: NextRequest) {
-  // Check required environment variables
-  const envCheck = checkEnvVars({
-    supabase: { url: true, serviceKey: true },
-    aws: { accessKeyId: true, secretAccessKey: true },
-    amazon: { accessKeyId: true, secretAccessKey: true, refreshToken: true, marketplaceId: true }
-  });
-
-  if (!envCheck.success) {
-    return NextResponse.json(
-      { error: 'Server configuration error', details: 'Missing required environment variables' },
-      { status: 500 }
+  try {
+    // Validate authentication
+    const user = await validateApiRequest(request);
+    
+    // Validate request body
+    const { storefrontId, debug = false } = await validateRequestBody(
+      request,
+      apiSchemas.storefrontAnalysis
     );
-  }
 
-  const supabase = createClient(
-    envCheck.values.supabaseUrl,
-    envCheck.values.supabaseServiceKey
-  );
-  
-  // Verify authentication
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+    // Check required environment variables
+    const envCheck = checkEnvVars({
+      supabase: { url: true, serviceKey: true },
+      aws: { accessKeyId: true, secretAccessKey: true },
+      amazon: { accessKeyId: true, secretAccessKey: true, refreshToken: true, marketplaceId: true }
+    });
 
-  const token = authHeader.split(' ')[1];
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-  
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+    if (!envCheck.success) {
+      throw new AppError(
+        'Service temporarily unavailable',
+        503,
+        'SERVICE_UNAVAILABLE'
+      );
+    }
 
-  const { storefrontId } = await request.json();
-  
-  if (!storefrontId) {
-    return NextResponse.json({ error: 'Storefront ID is required' }, { status: 400 });
-  }
+    const supabase = createClient(
+      envCheck.values.supabaseUrl,
+      envCheck.values.supabaseServiceKey
+    );
 
-  // Create streaming response
-  const stream = new ReadableStream({
-    async start(controller) {
+    // Create streaming response
+    const stream = new ReadableStream({
+      async start(controller) {
       const sendMessage = (message: StreamMessage) => {
         const data = `data: ${JSON.stringify(message)}\n\n`;
         controller.enqueue(new TextEncoder().encode(data));
@@ -350,7 +345,45 @@ export async function POST(request: NextRequest) {
                   
                   const referralFee = feeDetails.find(f => f.feeType === 'ReferralFee')?.finalFee.amount || 0;
                   const amazonFees = fees.totalFeesEstimate?.amount || 0;
-                  const digitalServicesFee = ukPrice * 0.02;
+                  
+                  // Extract ALL individual fees from SP-API response
+                  let fbaFee = 0;
+                  let digitalServicesFee = 0;
+                  let variableClosingFee = 0;
+                  let fixedClosingFee = 0;
+                  
+                  for (const fee of feeDetails) {
+                    const feeAmount = fee.finalFee.amount || 0;
+                    switch (fee.feeType) {
+                      case 'FBAFees':
+                      case 'FulfillmentFees':
+                      case 'FBAPerUnitFulfillmentFee':
+                      case 'FBAPerOrderFulfillmentFee':
+                        fbaFee += feeAmount;
+                        break;
+                      case 'VariableClosingFee':
+                        variableClosingFee = feeAmount;
+                        break;
+                      case 'FixedClosingFee':
+                        fixedClosingFee = feeAmount;
+                        break;
+                    }
+                  }
+                  
+                  // Digital Services Fee - check if it's in the SP-API response
+                  // If not, we need to understand the exact calculation
+                  const digitalServicesFeeFromAPI = feeDetails.find(f => 
+                    f.feeType === 'DigitalServicesFee' || 
+                    f.feeType === 'DigitalServiceTax' ||
+                    f.feeType === 'DST'
+                  )?.finalFee.amount;
+                  
+                  digitalServicesFee = digitalServicesFeeFromAPI || 0;
+                  
+                  // VAT calculations
+                  const vatRate = 0.20; // UK VAT rate
+                  const vatOnSale = ukPrice / (1 + vatRate) * vatRate; // VAT portion of sale price (~£25.82 for £154.94)
+                  const vatOnCostOfGoods = 0; // Usually no VAT on EU purchases (reverse charge)
 
                   // Check EU prices
                   const euPrices: any[] = [];
@@ -365,17 +398,26 @@ export async function POST(request: NextRequest) {
                       ? sourcePrice * EUR_TO_GBP_RATE 
                       : sourcePrice;
 
-                    const totalCost = sourcePriceGBP + amazonFees + digitalServicesFee;
-                    const profit = ukPrice - totalCost;
+                    // Calculate profit using the net sale price (after VAT)
+                    // Net Revenue = Sale Price - VAT on Sale
+                    const netRevenue = ukPrice - vatOnSale;
+                    
+                    // Total Costs = Cost of Goods + Amazon Fees + Digital Services Fee
+                    const totalCosts = sourcePriceGBP + amazonFees + digitalServicesFee;
+                    
+                    // Net Profit = Net Revenue - Total Costs
+                    const profit = netRevenue - totalCosts;
                     const roi = (profit / sourcePriceGBP) * 100;
+                    const profitMargin = (profit / netRevenue) * 100;
 
                     const marketplacePrice = {
                       marketplace: country,
                       sourcePrice,
                       sourcePriceGBP,
                       profit,
+                      profitMargin,
                       roi,
-                      totalCost
+                      totalCost: totalCosts
                     };
 
                     euPrices.push(marketplacePrice);
@@ -401,7 +443,7 @@ export async function POST(request: NextRequest) {
                           target_price: ukPrice,
                           amazon_fees: amazonFees,
                           referral_fee: referralFee,
-                          digital_services_fee: digitalServicesFee,
+                          digital_services_fee: 0, // Included in total amazon_fees from SP-API
                           uk_competitors: ukCompetitors,
                           uk_sales_rank: ukSalesRank,
                           best_source_marketplace: bestOpportunity.marketplace,
@@ -418,6 +460,9 @@ export async function POST(request: NextRequest) {
                         });
                     }
                     
+                    // Ensure netRevenue is calculated
+                    const netRevenue = ukPrice - vatOnSale;
+                    
                     const opportunity = {
                       asin,
                       productName: product.product_name || asin,
@@ -425,7 +470,10 @@ export async function POST(request: NextRequest) {
                       targetPrice: ukPrice,
                       amazonFees,
                       referralFee,
+                      fbaFee,
                       digitalServicesFee,
+                      vatOnSale,
+                      netRevenue,
                       ukCompetitors,
                       ukSalesRank,
                       euPrices: euPrices.sort((a, b) => b.roi - a.roi),
@@ -500,10 +548,22 @@ export async function POST(request: NextRequest) {
                         }
                       }
                       
-                      const amazonFees = referralFee + fbaFulfillmentFee + variableClosingFee + otherFees;
-                      const digitalServicesFee = ukPrice * 0.02;
-                      // VAT on Amazon fees (20%) - this is a business expense
-                      const vatOnFees = amazonFees * 0.20;
+                      // Use the total fees from SP-API
+                      const amazonFees = fees.totalFeesEstimate?.amount || 0;
+                      
+                      // Extract digital services fee if available
+                      const digitalServicesFeeFromAPI = feeDetails.find(f => 
+                        f.feeType === 'DigitalServicesFee' || 
+                        f.feeType === 'DigitalServiceTax' ||
+                        f.feeType === 'DST'
+                      )?.finalFee.amount;
+                      
+                      const digitalServicesFee = digitalServicesFeeFromAPI || 0;
+                      
+                      // VAT calculations
+                      const vatRate = 0.20;
+                      const vatOnSale = ukPrice / (1 + vatRate) * vatRate;
+                      const netRevenue = ukPrice - vatOnSale;
 
                       // Process EU prices
                       const euPrices: any[] = [];
@@ -518,18 +578,20 @@ export async function POST(request: NextRequest) {
                           ? sourcePrice * EUR_TO_GBP_RATE 
                           : sourcePrice;
 
-                        // Total cost includes VAT on fees as it's a real business expense
-                        const totalCost = sourcePriceGBP + amazonFees + digitalServicesFee + vatOnFees;
-                        const profit = ukPrice - totalCost;
+                        // Calculate profit using the net sale price (after VAT)
+                        const totalCosts = sourcePriceGBP + amazonFees + digitalServicesFee;
+                        const profit = netRevenue - totalCosts;
                         const roi = (profit / sourcePriceGBP) * 100;
+                        const profitMargin = (profit / netRevenue) * 100;
 
                         const marketplacePrice = {
                           marketplace: country,
                           sourcePrice,
                           sourcePriceGBP,
                           profit,
+                          profitMargin,
                           roi,
-                          totalCost
+                          totalCost: totalCosts
                         };
 
                         euPrices.push(marketplacePrice);
@@ -550,7 +612,10 @@ export async function POST(request: NextRequest) {
                           targetPrice: ukPrice,
                           amazonFees,
                           referralFee,
+                          fbaFee: fbaFulfillmentFee,
                           digitalServicesFee,
+                          vatOnSale,
+                          netRevenue,
                           ukCompetitors,
                           ukSalesRank,
                           euPrices: euPrices.sort((a, b) => b.roi - a.roi),
@@ -639,7 +704,8 @@ export async function POST(request: NextRequest) {
         });
 
       } catch (error: any) {
-        console.error('Streaming analysis error:', error);
+        // Use secure error handling for stream errors
+        sendStreamError(error, sendMessage);
         
         // Update scan record with error status
         if (scanId) {
@@ -647,27 +713,48 @@ export async function POST(request: NextRequest) {
             .from('arbitrage_scans')
             .update({
               status: 'failed',
-              error_message: error.message || 'Analysis failed',
+              error_message: 'Analysis failed',
               completed_at: new Date().toISOString()
             })
             .eq('id', scanId);
         }
-        
-        sendMessage({ 
-          type: 'error', 
-          data: { error: error.message || 'Analysis failed' } 
-        });
       } finally {
         controller.close();
       }
     }
   });
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    },
-  });
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    });
+  } catch (error) {
+    // Handle authentication, validation, and setup errors
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+    
+    if (error instanceof ValidationError) {
+      return NextResponse.json(
+        { error: error.message, field: error.field },
+        { status: error.statusCode }
+      );
+    }
+
+    // Use secure error handling for other errors
+    console.error('[API_ERROR]', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      endpoint: '/api/arbitrage/analyze-stream',
+      timestamp: new Date().toISOString()
+    });
+
+    return NextResponse.json(
+      { error: 'Service temporarily unavailable' },
+      { status: 503 }
+    );
+  }
 }

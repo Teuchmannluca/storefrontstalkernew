@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
 import AddStorefrontModal from '@/components/AddStorefrontModal'
 import SavedScansPanel from '@/components/SavedScansPanel'
+import SavedScansInline from '@/components/SavedScansInline'
 import { 
   ExclamationTriangleIcon,
   ChevronDownIcon,
@@ -14,7 +15,8 @@ import {
   UserGroupIcon,
   ClockIcon,
   CheckCircleIcon,
-  XCircleIcon
+  XCircleIcon,
+  ShoppingBagIcon
 } from '@heroicons/react/24/outline'
 import { Fragment } from 'react'
 import { Listbox, Transition } from '@headlessui/react'
@@ -47,6 +49,8 @@ interface ArbitrageOpportunity {
   referralFee: number
   fbaFee: number
   digitalServicesFee: number
+  vatOnSale?: number
+  netRevenue?: number
   ukCompetitors: number
   ukLowestPrice: number
   ukSalesRank: number
@@ -80,7 +84,6 @@ export default function A2AEUPage() {
   const [syncingProducts, setSyncingProducts] = useState(false)
   const [showProfitableOnly, setShowProfitableOnly] = useState(true)
   const [analyzingAllSellers, setAnalyzingAllSellers] = useState(false)
-  const [showSavedScans, setShowSavedScans] = useState(false)
   const [viewingSavedScan, setViewingSavedScan] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<SortOption>('profit')
   const [selectedDeals, setSelectedDeals] = useState<Set<string>>(new Set())
@@ -535,81 +538,91 @@ export default function A2AEUPage() {
         <div className="p-8">
           {/* Header */}
           <div className="mb-8">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">A2A EU Deals</h1>
-                <p className="text-gray-600">Find profitable Amazon UK to EU arbitrage opportunities</p>
-              </div>
-              <button
-                onClick={() => setShowSavedScans(!showSavedScans)}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
-              >
-                <ClockIcon className="w-5 h-5" />
-                {showSavedScans ? 'Hide' : 'Show'} Saved Scans
-              </button>
-            </div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">A2A EU Deals</h1>
+            <p className="text-gray-600">Find profitable Amazon UK to EU arbitrage opportunities</p>
           </div>
 
-          {/* Saved Scans Panel */}
-          {showSavedScans && (
-            <SavedScansPanel 
-              onLoadScan={(scanId) => {
-                loadScanResults(scanId)
-                setShowSavedScans(false)
-              }}
-              onClose={() => setShowSavedScans(false)}
-            />
-          )}
+          {/* Saved Scans Inline */}
+          <SavedScansInline 
+            onLoadScan={(scanId) => {
+              loadScanResults(scanId)
+            }}
+          />
 
           {/* Storefront Selector */}
           {!loading && storefronts.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select Storefront
-              </label>
+            <div className="bg-gradient-to-br from-white to-gray-50 rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Select Storefront</h3>
+                  <p className="text-sm text-gray-600">Choose a storefront to analyse deals</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-500">
+                    {storefronts.length} storefront{storefronts.length > 1 ? 's' : ''} available
+                  </span>
+                </div>
+              </div>
+              
               <Listbox value={selectedStorefront} onChange={setSelectedStorefront}>
                 <div className="relative">
-                  <Listbox.Button className="relative w-full cursor-pointer rounded-xl bg-white py-3 pl-4 pr-10 text-left border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
-                    <span className="block truncate">
-                      {selectedStorefront ? (
-                        <>
-                          <span className="font-medium">{selectedStorefront.name}</span>
-                          <span className="text-gray-500 ml-2">({selectedStorefront.seller_id})</span>
-                        </>
-                      ) : (
-                        'Select a storefront'
-                      )}
-                    </span>
-                    <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
-                      <ChevronDownIcon className="h-5 w-5 text-gray-400" aria-hidden="true" />
+                  <Listbox.Button className="relative w-full cursor-pointer rounded-xl bg-white py-4 pl-6 pr-12 text-left border-2 border-gray-200 hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all shadow-sm">
+                    {selectedStorefront ? (
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="block font-semibold text-gray-900 text-lg">{selectedStorefront.name}</span>
+                          <span className="block text-gray-500 text-sm mt-1">Seller ID: {selectedStorefront.seller_id}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mr-8">
+                          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                          <span className="text-sm text-gray-600">Active</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="block text-gray-500">Choose a storefront to start</span>
+                    )}
+                    <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
+                      <div className="p-1 rounded-lg bg-gray-100">
+                        <ChevronDownIcon className="h-5 w-5 text-gray-600" aria-hidden="true" />
+                      </div>
                     </span>
                   </Listbox.Button>
                   <Transition
                     as={Fragment}
-                    leave="transition ease-in duration-100"
-                    leaveFrom="opacity-100"
-                    leaveTo="opacity-0"
+                    enter="transition ease-out duration-100"
+                    enterFrom="transform opacity-0 scale-95"
+                    enterTo="transform opacity-100 scale-100"
+                    leave="transition ease-in duration-75"
+                    leaveFrom="transform opacity-100 scale-100"
+                    leaveTo="transform opacity-0 scale-95"
                   >
-                    <Listbox.Options className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-xl bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
+                    <Listbox.Options className="absolute z-10 mt-2 max-h-60 w-full overflow-auto rounded-xl bg-white py-2 text-base shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
                       {storefronts.map((storefront) => (
                         <Listbox.Option
                           key={storefront.id}
                           className={({ active }) =>
-                            `relative cursor-pointer select-none py-3 pl-4 pr-4 ${
-                              active ? 'bg-indigo-50 text-indigo-900' : 'text-gray-900'
+                            `relative cursor-pointer select-none py-3 px-6 ${
+                              active ? 'bg-gradient-to-r from-indigo-50 to-violet-50' : ''
                             }`
                           }
                           value={storefront}
                         >
-                          {({ selected }) => (
-                            <>
-                              <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>
-                                {storefront.name}
-                              </span>
-                              <span className="text-gray-500 text-sm">
-                                Seller ID: {storefront.seller_id}
-                              </span>
-                            </>
+                          {({ selected, active }) => (
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <span className={`block ${selected ? 'font-semibold text-indigo-900' : 'font-medium text-gray-900'}`}>
+                                  {storefront.name}
+                                </span>
+                                <span className={`block text-sm ${active ? 'text-indigo-700' : 'text-gray-500'}`}>
+                                  Seller ID: {storefront.seller_id}
+                                </span>
+                              </div>
+                              {selected && (
+                                <div className="flex items-center">
+                                  <CheckCircleIcon className="h-5 w-5 text-indigo-600" />
+                                </div>
+                              )}
+                            </div>
                           )}
                         </Listbox.Option>
                       ))}
@@ -620,24 +633,47 @@ export default function A2AEUPage() {
               
               {/* Product Count and Sync */}
               {selectedStorefront && (
-                <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-gray-600">
-                      Products in storefront: <span className="font-medium text-gray-900">{productCount}</span>
-                    </span>
+                <div className="mt-4 p-4 bg-gradient-to-r from-indigo-50 to-violet-50 rounded-lg border border-indigo-100">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-white rounded-lg shadow-sm">
+                        <ShoppingBagIcon className="w-5 h-5 text-indigo-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          {productCount} Products
+                        </p>
+                        <p className="text-xs text-gray-600">
+                          {productCount === 0 ? 'No products synced yet' : 'Ready to analyse'}
+                        </p>
+                      </div>
+                    </div>
                     <button
                       onClick={syncProducts}
                       disabled={syncingProducts}
-                      className="text-sm text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50"
+                      className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-indigo-200 rounded-lg text-sm font-medium text-indigo-700 hover:bg-indigo-50 transition disabled:opacity-50"
                     >
-                      {syncingProducts ? 'Syncing...' : 'Sync Products'}
+                      {syncingProducts ? (
+                        <>
+                          <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                          Syncing...
+                        </>
+                      ) : (
+                        <>
+                          <ArrowPathIcon className="h-4 w-4" />
+                          Sync Products
+                        </>
+                      )}
                     </button>
                   </div>
                   
                   {productCount === 0 && (
-                    <p className="text-xs text-amber-600">
-                      No products found. Click "Synchronise Products" to fetch ASINs from Amazon.
-                    </p>
+                    <div className="mt-3 p-2 bg-amber-50 border border-amber-200 rounded-md">
+                      <p className="text-xs text-amber-800 flex items-start gap-1">
+                        <ExclamationTriangleIcon className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                        Click &quot;Sync Products&quot; to fetch ASINs from Amazon before analysing
+                      </p>
+                    </div>
                   )}
                 </div>
               )}
@@ -662,27 +698,27 @@ export default function A2AEUPage() {
               </div>
               
               {/* Analyze Buttons */}
-              <div className="mt-4 space-y-3">
+              <div className="mt-4 flex gap-3">
                 {/* Single Storefront Analysis */}
                 <button
                   onClick={analyzeArbitrage}
                   disabled={!selectedStorefront || analyzing || productCount === 0}
-                  className="w-full px-6 py-3 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-xl font-medium hover:from-violet-600 hover:to-indigo-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="px-4 py-2.5 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-lg font-medium text-sm hover:from-violet-600 hover:to-indigo-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {analyzing ? (
                     <>
-                      <ArrowPathIcon className="h-5 w-5 animate-spin" />
-                      Analyzing Products...
+                      <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                      Analyzing...
                     </>
                   ) : productCount === 0 ? (
                     <>
-                      <ExclamationTriangleIcon className="h-5 w-5" />
-                      Sync Products First
+                      <ExclamationTriangleIcon className="h-4 w-4" />
+                      Sync First
                     </>
                   ) : (
                     <>
-                      <SparklesIcon className="h-5 w-5" />
-                      Analyze Selected Storefront
+                      <SparklesIcon className="h-4 w-4" />
+                      Analyze Storefront
                     </>
                   )}
                 </button>
@@ -691,17 +727,17 @@ export default function A2AEUPage() {
                 <button
                   onClick={analyzeAllSellers}
                   disabled={analyzing || analyzingAllSellers || storefronts.length === 0}
-                  className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-medium hover:from-green-600 hover:to-emerald-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="px-4 py-2.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-medium text-sm hover:from-green-600 hover:to-emerald-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {analyzingAllSellers ? (
                     <>
-                      <ArrowPathIcon className="h-5 w-5 animate-spin" />
-                      Analyzing All Sellers...
+                      <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                      Analyzing All...
                     </>
                   ) : (
                     <>
-                      <UserGroupIcon className="h-5 w-5" />
-                      Analyze All Sellers ({storefronts.length} storefronts)
+                      <UserGroupIcon className="h-4 w-4" />
+                      All Sellers ({storefronts.length})
                     </>
                   )}
                 </button>
@@ -739,7 +775,7 @@ export default function A2AEUPage() {
           {/* No Storefronts Message */}
           {!loading && storefronts.length === 0 && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
-              <p className="text-gray-600 mb-4">You don't have any storefronts yet.</p>
+              <p className="text-gray-600 mb-4">You don&apos;t have any storefronts yet.</p>
               <button
                 onClick={() => setShowAddStorefrontModal(true)}
                 className="px-4 py-2 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-xl font-medium hover:from-violet-600 hover:to-indigo-600 transition"
@@ -1014,30 +1050,289 @@ export default function A2AEUPage() {
                           </div>
                         </div>
                         
-                        {/* WhatsApp Share Button */}
-                        <button
-                          onClick={() => {
-                            const message = encodeURIComponent(
-                              `🎯 *A2A EU Deal*\n\n` +
-                              `📦 *Product:* ${opp.productName}\n` +
-                              `🔗 *ASIN:* ${opp.asin}\n\n` +
-                              `💰 *Profit:* £${(opp.bestOpportunity?.profit || 0).toFixed(2)} (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
-                              `🛒 *Buy from:* ${getCountryFlag(opp.bestOpportunity?.marketplace || 'EU')} Amazon ${opp.bestOpportunity?.marketplace || 'EU'}\n` +
-                              `💵 *Buy Price:* £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)} (€${(opp.bestOpportunity?.sourcePrice || 0).toFixed(2)})\n` +
-                              `🔗 ${`https://www.amazon.${getAmazonDomain(opp.bestOpportunity?.marketplace || 'DE')}/dp/${opp.asin}`}\n\n` +
-                              `🇬🇧 *Sell in UK:* £${(opp.targetPrice || 0).toFixed(2)}\n` +
-                              `🔗 ${`https://www.amazon.co.uk/dp/${opp.asin}`}\n\n` +
-                              `📸 *Product Image:* ${opp.productImage || 'No image available'}`
-                            );
-                            window.open(`https://wa.me/?text=${message}`, '_blank');
-                          }}
-                          className="mt-3 px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1 ml-auto"
-                        >
-                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
-                          </svg>
-                          Share
-                        </button>
+                        {/* Action Buttons */}
+                        <div className="mt-3 flex gap-2 ml-auto">
+                          {/* Debug Button */}
+                          <button
+                            onClick={() => {
+                              const debugWindow = window.open('', '_blank', 'width=650,height=800,scrollbars=yes,resizable=yes');
+                              if (debugWindow) {
+                                // Use actual data from the opportunity
+                                const sellingPrice = opp.targetPrice || 0;
+                                const totalAmazonFees = opp.amazonFees || 0;
+                                const referralFee = opp.referralFee || 0;
+                                const fbaFee = opp.fbaFee || 0;
+                                const digitalServicesFee = opp.digitalServicesFee || 0;
+                                const vatOnSale = opp.vatOnSale || (sellingPrice / 1.20 * 0.20);
+                                const netRevenue = opp.netRevenue || (sellingPrice - vatOnSale);
+                                const costOfGoods = opp.bestOpportunity?.sourcePriceGBP || 0;
+                                
+                                // Calculate using the correct formula
+                                const totalCosts = costOfGoods + totalAmazonFees + digitalServicesFee;
+                                const profit = netRevenue - totalCosts;
+                                
+                                // For display
+                                const displayReferralFee = referralFee;
+                                const displayFbaFee = fbaFee;
+                                const displayDigitalServicesFee = digitalServicesFee;
+                                const otherAmazonFees = Math.max(0, totalAmazonFees - referralFee - fbaFee);
+                                
+                                debugWindow.document.write(`
+                                  <!DOCTYPE html>
+                                  <html>
+                                    <head>
+                                      <title>Debug: ${opp.productName}</title>
+                                      <style>
+                                        body { 
+                                          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                                          padding: 20px; 
+                                          line-height: 1.6; 
+                                          background: #f9fafb;
+                                        }
+                                        .container { 
+                                          max-width: 500px; 
+                                          margin: 0 auto; 
+                                          background: white; 
+                                          padding: 24px; 
+                                          border-radius: 12px; 
+                                          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                                        }
+                                        .header { 
+                                          text-align: center; 
+                                          margin-bottom: 24px; 
+                                          padding-bottom: 16px; 
+                                          border-bottom: 2px solid #f59e0b;
+                                        }
+                                        .title { 
+                                          color: #dc2626; 
+                                          font-size: 20px; 
+                                          font-weight: bold; 
+                                          margin-bottom: 8px;
+                                        }
+                                        .asin { 
+                                          color: #6b7280; 
+                                          font-size: 14px; 
+                                        }
+                                        .breakdown { 
+                                          margin: 20px 0; 
+                                        }
+                                        .calculation-row { 
+                                          display: flex; 
+                                          justify-content: space-between; 
+                                          padding: 8px 0; 
+                                          border-bottom: 1px solid #e5e7eb;
+                                        }
+                                        .calculation-row:last-child { 
+                                          border-bottom: none; 
+                                          font-weight: bold; 
+                                          font-size: 18px; 
+                                          padding-top: 16px; 
+                                          border-top: 2px solid #374151;
+                                        }
+                                        .label { 
+                                          color: #374151; 
+                                        }
+                                        .value { 
+                                          font-weight: 600; 
+                                        }
+                                        .positive { 
+                                          color: #059669; 
+                                        }
+                                        .negative { 
+                                          color: #dc2626; 
+                                        }
+                                        .neutral { 
+                                          color: #374151; 
+                                        }
+                                        .formula { 
+                                          background: #f3f4f6; 
+                                          padding: 16px; 
+                                          border-radius: 8px; 
+                                          margin: 16px 0; 
+                                          font-family: monospace; 
+                                          font-size: 14px; 
+                                          color: #374151;
+                                        }
+                                        .note { 
+                                          background: #fef3c7; 
+                                          border: 1px solid #f59e0b; 
+                                          padding: 12px; 
+                                          border-radius: 6px; 
+                                          font-size: 13px; 
+                                          color: #92400e; 
+                                          margin-top: 16px;
+                                        }
+                                      </style>
+                                    </head>
+                                    <body>
+                                      <div class="container">
+                                        <div class="header">
+                                          <div class="title">🔍 Fee Breakdown Debug</div>
+                                          <div class="asin">ASIN: ${opp.asin}</div>
+                                        </div>
+                                        
+                                        <h3 style="color: #374151; margin-bottom: 16px;">📦 ${opp.productName}</h3>
+                                        
+                                        <div class="breakdown">
+                                          <div class="calculation-row">
+                                            <span class="label">UK Selling Price:</span>
+                                            <span class="value neutral">£${sellingPrice.toFixed(2)}</span>
+                                          </div>
+                                          
+                                          <div class="calculation-row">
+                                            <span class="label">Cost of Goods (${opp.bestOpportunity?.marketplace || 'EU'}):</span>
+                                            <span class="value negative">-£${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)}</span>
+                                          </div>
+                                        </div>
+                                        
+                                        <!-- Amazon Fees Detailed Breakdown -->
+                                        <div style="margin: 20px 0;">
+                                          <h4 style="color: #dc2626; margin-bottom: 12px; font-weight: bold;">🏪 Amazon Fee Breakdown</h4>
+                                          <div class="breakdown" style="background: #fef2f2; padding: 16px; border-radius: 8px; border: 1px solid #fecaca;">
+                                            ${displayReferralFee > 0 ? `
+                                            <div class="calculation-row">
+                                              <span class="label">Referral Fee:</span>
+                                              <span class="value negative">-£${displayReferralFee.toFixed(2)}</span>
+                                            </div>` : ''}
+                                            
+                                            ${displayFbaFee > 0 ? `
+                                            <div class="calculation-row">
+                                              <span class="label">FBA Fee:</span>
+                                              <span class="value negative">-£${displayFbaFee.toFixed(2)}</span>
+                                            </div>` : ''}
+                                            
+                                            ${otherAmazonFees > 0 ? `
+                                            <div class="calculation-row">
+                                              <span class="label">Other Amazon Fees:</span>
+                                              <span class="value negative">-£${otherAmazonFees.toFixed(2)}</span>
+                                            </div>` : ''}
+                                            
+                                            <div class="calculation-row" style="border-top: 2px solid #dc2626; padding-top: 8px; font-weight: bold; margin-top: 8px;">
+                                              <span class="label">Total Amazon Fees:</span>
+                                              <span class="value negative">-£${totalAmazonFees.toFixed(2)}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        
+                                        <div class="breakdown">
+                                          ${displayDigitalServicesFee > 0 ? `
+                                          <div class="calculation-row">
+                                            <span class="label">Digital Services Fee:</span>
+                                            <span class="value negative">-£${displayDigitalServicesFee.toFixed(2)}</span>
+                                          </div>` : ''}
+                                        </div>
+                                        
+                                        <!-- VAT Breakdown -->
+                                        <div style="margin: 20px 0;">
+                                          <h4 style="color: #1e40af; margin-bottom: 12px; font-weight: bold;">💷 VAT Calculation</h4>
+                                          <div class="breakdown" style="background: #eff6ff; padding: 16px; border-radius: 8px; border: 1px solid #bfdbfe;">
+                                            <div class="calculation-row">
+                                              <span class="label">Sale Price (inc VAT):</span>
+                                              <span class="value neutral">£${sellingPrice.toFixed(2)}</span>
+                                            </div>
+                                            <div class="calculation-row">
+                                              <span class="label">VAT on Sale (20%):</span>
+                                              <span class="value negative">-£${vatOnSale.toFixed(2)}</span>
+                                            </div>
+                                            <div class="calculation-row" style="border-top: 2px solid #3b82f6; padding-top: 8px; font-weight: bold;">
+                                              <span class="label">Net Revenue (ex VAT):</span>
+                                              <span class="value neutral">£${netRevenue.toFixed(2)}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        
+                                        <div class="breakdown">
+                                          <div class="calculation-row">
+                                            <span class="label">Net Profit:</span>
+                                            <span class="value ${profit > 0 ? 'positive' : 'negative'}">£${profit.toFixed(2)}</span>
+                                          </div>
+                                        </div>
+                                        
+                                        <div class="formula">
+                                          <strong>Profit Calculation Formula:</strong><br>
+                                          Net Profit = Net Revenue - Total Costs<br>
+                                          Net Profit = (Sale Price - VAT) - (Cost of Goods + Amazon Fees + Digital Services Fee)<br><br>
+                                          £${profit.toFixed(2)} = £${netRevenue.toFixed(2)} - (£${costOfGoods.toFixed(2)} + £${totalAmazonFees.toFixed(2)}${displayDigitalServicesFee > 0 ? ` + £${displayDigitalServicesFee.toFixed(2)}` : ''})<br><br>
+                                          <strong>Detailed Breakdown:</strong><br>
+                                          Sale Price (inc VAT): £${sellingPrice.toFixed(2)}<br>
+                                          Less VAT (20%): -£${vatOnSale.toFixed(2)}<br>
+                                          = Net Revenue: £${netRevenue.toFixed(2)}<br><br>
+                                          Less Cost of Goods: -£${costOfGoods.toFixed(2)}<br>
+                                          Less Amazon Fees: -£${totalAmazonFees.toFixed(2)}<br>
+                                          ${displayDigitalServicesFee > 0 ? `Less Digital Services: -£${displayDigitalServicesFee.toFixed(2)}<br>` : ''}
+                                          = Net Profit: £${profit.toFixed(2)}
+                                        </div>
+                                        
+                                        <div style="margin-top: 20px;">
+                                          <h4 style="color: #374151; margin-bottom: 12px;">📊 Performance Metrics</h4>
+                                          <div class="calculation-row">
+                                            <span class="label">ROI:</span>
+                                            <span class="value ${(opp.bestOpportunity?.roi || 0) > 0 ? 'positive' : 'negative'}">${(opp.bestOpportunity?.roi || 0).toFixed(1)}%</span>
+                                          </div>
+                                          <div class="calculation-row">
+                                            <span class="label">Profit Margin:</span>
+                                            <span class="value ${profit > 0 ? 'positive' : 'negative'}">${((profit / (opp.targetPrice || 1)) * 100).toFixed(1)}%</span>
+                                          </div>
+                                          <div class="calculation-row">
+                                            <span class="label">Exchange Rate (EUR→GBP):</span>
+                                            <span class="value neutral">€1 = £${EUR_TO_GBP_RATE}</span>
+                                          </div>
+                                        </div>
+                                        
+                                        <div class="note">
+                                          <strong>Note:</strong> This breakdown shows actual fee data from Amazon's SP-API response. 
+                                          All fees are calculated by Amazon based on the product category, size, weight, and current rates. 
+                                          Digital Services Fee may vary based on seller type and product category. All prices exclude VAT.
+                                        </div>
+                                        
+                                        <div style="text-align: center; margin-top: 20px;">
+                                          <button onclick="window.close()" style="
+                                            background: #6366f1; 
+                                            color: white; 
+                                            border: none; 
+                                            padding: 10px 20px; 
+                                            border-radius: 6px; 
+                                            cursor: pointer; 
+                                            font-weight: 600;
+                                          ">Close Window</button>
+                                        </div>
+                                      </div>
+                                    </body>
+                                  </html>
+                                `);
+                                debugWindow.document.close();
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors flex items-center gap-1"
+                          >
+                            🔍 Debug
+                          </button>
+                          
+                          {/* WhatsApp Share Button */}
+                          <button
+                            onClick={() => {
+                              const message = encodeURIComponent(
+                                `🎯 *A2A EU Deal*\n\n` +
+                                `📦 *Product:* ${opp.productName}\n` +
+                                `🔗 *ASIN:* ${opp.asin}\n\n` +
+                                `💰 *Profit:* £${(opp.bestOpportunity?.profit || 0).toFixed(2)} (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
+                                `🛒 *Buy from:* ${getCountryFlag(opp.bestOpportunity?.marketplace || 'EU')} Amazon ${opp.bestOpportunity?.marketplace || 'EU'}\n` +
+                                `💵 *Buy Price:* £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)} (€${(opp.bestOpportunity?.sourcePrice || 0).toFixed(2)})\n` +
+                                `🔗 ${`https://www.amazon.${getAmazonDomain(opp.bestOpportunity?.marketplace || 'DE')}/dp/${opp.asin}`}\n\n` +
+                                `🇬🇧 *Sell in UK:* £${(opp.targetPrice || 0).toFixed(2)}\n` +
+                                `🔗 ${`https://www.amazon.co.uk/dp/${opp.asin}`}\n\n` +
+                                `📸 *Product Image:* ${opp.productImage || 'No image available'}`
+                              );
+                              window.open(`https://wa.me/?text=${message}`, '_blank');
+                            }}
+                            className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1"
+                          >
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+                            </svg>
+                            Share
+                          </button>
+                        </div>
                       </div>
                     </div>
 
