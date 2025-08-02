@@ -1025,7 +1025,7 @@ export default function A2AEUPage() {
 
                       {/* Right: Profit Info */}
                       <div className="text-right">
-                        <p className="text-sm text-gray-500 mb-1">NET PROFIT (EX-VAT)</p>
+                        <p className="text-sm text-gray-500 mb-1">NET PROFIT (INC-VAT)</p>
                         <p className={`text-4xl font-bold ${opp.bestOpportunity?.profit > 0 ? 'text-green-600' : 'text-red-600'}`}>
                           £{(opp.bestOpportunity?.profit || 0).toFixed(2)}
                         </p>

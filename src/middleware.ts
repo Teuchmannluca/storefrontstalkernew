@@ -5,6 +5,14 @@ import { createServerClient } from '@supabase/ssr'
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next()
   
+  // Security headers for all responses
+  response.headers.set('X-Frame-Options', 'DENY')
+  response.headers.set('X-Content-Type-Options', 'nosniff')
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  response.headers.set('X-XSS-Protection', '1; mode=block')
+  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  
   // Create Supabase client for SSR
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -27,17 +35,6 @@ export async function middleware(request: NextRequest) {
   // Get authenticated user
   const { data: { user }, error } = await supabase.auth.getUser()
   
-  // Debug logging (remove in production)
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`[MIDDLEWARE] ${request.nextUrl.pathname} - User: ${user ? user.id : 'none'} - Error: ${error ? error.message : 'none'}`)
-  }
-  
-  // Security headers for all responses
-  response.headers.set('X-Frame-Options', 'DENY')
-  response.headers.set('X-Content-Type-Options', 'nosniff')
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
-  response.headers.set('X-XSS-Protection', '1; mode=block')
-  
   // Allow login page without authentication
   if (request.nextUrl.pathname === '/') {
     // If user is already authenticated, redirect to dashboard
@@ -45,12 +42,6 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/dashboard', request.url))
     }
     // Otherwise allow access to login page
-    return response
-  }
-
-  // Development bypass - allow dashboard access without auth for testing
-  if (process.env.NODE_ENV === 'development' && request.nextUrl.pathname.startsWith('/dashboard')) {
-    console.log('[MIDDLEWARE] Development mode - allowing dashboard access')
     return response
   }
 
@@ -62,12 +53,6 @@ export async function middleware(request: NextRequest) {
       request.nextUrl.pathname.startsWith(endpoint)
     )
     
-    // Development bypass for API routes
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[MIDDLEWARE] Development mode - allowing API access')
-      return response
-    }
-    
     if (!isPublicEndpoint && (!user || error)) {
       return NextResponse.json(
         { error: 'Authentication required' }, 
@@ -78,6 +63,13 @@ export async function middleware(request: NextRequest) {
   
   // Protect dashboard routes
   if (request.nextUrl.pathname.startsWith('/dashboard')) {
+    if (!user || error) {
+      return NextResponse.redirect(new URL('/', request.url))
+    }
+  }
+  
+  // Block access to debug and test routes in production
+  if (request.nextUrl.pathname.startsWith('/debug') || request.nextUrl.pathname.startsWith('/test')) {
     if (!user || error) {
       return NextResponse.redirect(new URL('/', request.url))
     }
