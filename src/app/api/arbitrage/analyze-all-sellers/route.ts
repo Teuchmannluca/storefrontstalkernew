@@ -322,7 +322,9 @@ export async function POST(request: NextRequest) {
 
               const ukPrice = marketplacePrices.UK.price;
               const ukCompetitors = marketplacePrices.UK.numberOfOffers;
-              const ukSalesRank = marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
+              // Use sales rank from database first, fallback to SP-API data
+              const ukSalesRank = product.current_sales_rank || marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
+              const salesPerMonth = product.sales_per_month || 0;
 
               try {
                 // Ensure minimum interval between fees requests (1 request per second)
@@ -405,6 +407,7 @@ export async function POST(request: NextRequest) {
                           digital_services_fee: digitalServicesFee,
                           uk_competitors: ukCompetitors,
                           uk_sales_rank: ukSalesRank,
+                          sales_per_month: salesPerMonth,
                           best_source_marketplace: bestOpportunity.marketplace,
                           best_source_price: bestOpportunity.sourcePrice,
                           best_source_price_gbp: bestOpportunity.sourcePriceGBP,
@@ -425,6 +428,7 @@ export async function POST(request: NextRequest) {
                       digitalServicesFee,
                       ukCompetitors,
                       ukSalesRank,
+                      salesPerMonth,
                       euPrices: euPrices.sort((a, b) => b.roi - a.roi),
                       bestOpportunity,
                       storefronts: product.storefronts // Include which storefronts have this ASIN
@@ -524,6 +528,7 @@ export async function POST(request: NextRequest) {
                               digital_services_fee: digitalServicesFee,
                               uk_competitors: ukCompetitors,
                               uk_sales_rank: ukSalesRank,
+                              sales_per_month: salesPerMonth,
                               best_source_marketplace: bestOpportunity.marketplace,
                               best_source_price: bestOpportunity.sourcePrice,
                               best_source_price_gbp: bestOpportunity.sourcePriceGBP,
@@ -544,6 +549,7 @@ export async function POST(request: NextRequest) {
                           digitalServicesFee,
                           ukCompetitors,
                           ukSalesRank,
+                          salesPerMonth,
                           euPrices: euPrices.sort((a, b) => b.roi - a.roi),
                           bestOpportunity,
                           storefronts: product.storefronts

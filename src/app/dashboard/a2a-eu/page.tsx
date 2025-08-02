@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
 import AddStorefrontModal from '@/components/AddStorefrontModal'
 import SavedScansPanel from '@/components/SavedScansPanel'
 import SavedScansInline from '@/components/SavedScansInline'
+import { estimateMonthlySalesFromRank, formatSalesEstimate } from '@/lib/sales-estimator'
 import { 
   ExclamationTriangleIcon,
   ChevronDownIcon,
@@ -16,7 +17,8 @@ import {
   ClockIcon,
   CheckCircleIcon,
   XCircleIcon,
-  ShoppingBagIcon
+  ShoppingBagIcon,
+  BuildingStorefrontIcon
 } from '@heroicons/react/24/outline'
 import { Fragment } from 'react'
 import { Listbox, Transition } from '@headlessui/react'
@@ -54,6 +56,7 @@ interface ArbitrageOpportunity {
   ukCompetitors: number
   ukLowestPrice: number
   ukSalesRank: number
+  salesPerMonth?: number
   euPrices: EUMarketplacePrice[]
   bestOpportunity: EUMarketplacePrice
   storefronts?: Array<{
@@ -79,6 +82,9 @@ export default function A2AEUPage() {
     exchangeRate: number
     progressMessage?: string
     progress?: number
+    estimatedMinutesRemaining?: number
+    processedCount?: number
+    totalProducts?: number
   } | null>(null)
   const [productCount, setProductCount] = useState<number>(0)
   const [syncingProducts, setSyncingProducts] = useState(false)
@@ -88,10 +94,17 @@ export default function A2AEUPage() {
   const [sortBy, setSortBy] = useState<SortOption>('profit')
   const [selectedDeals, setSelectedDeals] = useState<Set<string>>(new Set())
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   useEffect(() => {
     checkAuth()
-  }, [])
+    
+    // Check if there's a scanId in the URL parameters
+    const scanId = searchParams.get('scanId')
+    if (scanId) {
+      loadScanResults(scanId)
+    }
+  }, [searchParams])
   
   useEffect(() => {
     if (selectedStorefront) {
@@ -101,26 +114,46 @@ export default function A2AEUPage() {
 
 
   const checkAuth = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
+    try {
+      const { data: { user }, error } = await supabase.auth.getUser()
+      console.log('Auth check:', { user: user?.id, error })
+      
+      if (error) {
+        console.error('Auth error:', error)
+        router.push('/')
+      } else if (!user) {
+        console.log('No user found, redirecting to login')
+        router.push('/')
+      } else {
+        console.log('User authenticated, fetching storefronts')
+        fetchStorefronts()
+      }
+    } catch (error) {
+      console.error('Error checking auth:', error)
       router.push('/')
-    } else {
-      fetchStorefronts()
     }
   }
 
   const fetchStorefronts = async () => {
     try {
+      console.log('Fetching storefronts...')
       const { data, error } = await supabase
         .from('storefronts')
         .select('id, name, seller_id')
         .order('name')
 
-      if (!error && data) {
+      console.log('Storefronts query result:', { data, error })
+      
+      if (error) {
+        console.error('Supabase error fetching storefronts:', error)
+      } else if (data) {
+        console.log(`Found ${data.length} storefronts`)
         setStorefronts(data)
         if (data.length > 0) {
           setSelectedStorefront(data[0])
         }
+      } else {
+        console.log('No data returned from storefronts query')
       }
     } catch (error) {
       console.error('Error fetching storefronts:', error)
@@ -139,6 +172,9 @@ export default function A2AEUPage() {
     setOpportunities([])
     setAnalysisStats(null)
     setViewingSavedScan(scanId)
+    
+    // Scroll to the beginning of the scan results
+    window.scrollTo({ top: 0, behavior: 'smooth' })
     
     try {
       // Fetch scan details
@@ -176,6 +212,7 @@ export default function A2AEUPage() {
         ukCompetitors: opp.uk_competitors || 0,
         ukLowestPrice: parseFloat(opp.target_price || '0'), // Using target price as lowest
         ukSalesRank: opp.uk_sales_rank || 0,
+        salesPerMonth: opp.sales_per_month || 0,
         euPrices: opp.all_marketplace_prices?.euPrices || [],
         bestOpportunity: {
           marketplace: opp.best_source_marketplace || 'EU',
@@ -306,7 +343,10 @@ export default function A2AEUPage() {
                     exchangeRate: EUR_TO_GBP_RATE,
                     ...prev,
                     progressMessage: message.data.step,
-                    progress: message.data.progress
+                    progress: message.data.progress,
+                    estimatedMinutesRemaining: message.data.estimatedMinutesRemaining,
+                    processedCount: message.data.processedCount,
+                    totalProducts: message.data.totalProducts
                   }))
                   break
                   
@@ -419,7 +459,10 @@ export default function A2AEUPage() {
                     exchangeRate: EUR_TO_GBP_RATE,
                     ...prev,
                     progressMessage: message.data.step,
-                    progress: message.data.progress
+                    progress: message.data.progress,
+                    estimatedMinutesRemaining: message.data.estimatedMinutesRemaining,
+                    processedCount: message.data.processedCount,
+                    totalProducts: message.data.totalProducts
                   }))
                   break
                   
@@ -452,17 +495,36 @@ export default function A2AEUPage() {
                   
                 case 'error':
                   console.error('Analysis error:', message.data.error)
-                  alert(message.data.error)
-                  setAnalyzing(false)
-                  // Update analysis stats to show error
-                  setAnalysisStats({
-                    totalOpportunities: 0,
-                    productsAnalyzed: 0,
-                    exchangeRate: EUR_TO_GBP_RATE,
-                    progressMessage: `Error: ${message.data.error}`,
-                    progress: 0
-                  })
-                  return // Exit the stream processing
+                  
+                  // Check if it's a critical error that should stop processing
+                  const criticalErrors = ['No products found', 'Authentication required', 'Service temporarily unavailable']
+                  const isCriticalError = criticalErrors.some(err => message.data.error.includes(err))
+                  
+                  if (isCriticalError) {
+                    alert(message.data.error)
+                    setAnalyzing(false)
+                    // Update analysis stats to show error
+                    setAnalysisStats({
+                      totalOpportunities: 0,
+                      productsAnalyzed: 0,
+                      exchangeRate: EUR_TO_GBP_RATE,
+                      progressMessage: `Error: ${message.data.error}`,
+                      progress: 0
+                    })
+                    return // Exit the stream processing for critical errors
+                  } else {
+                    // For non-critical errors, just log and continue
+                    console.warn('Non-critical error during analysis:', message.data.error)
+                    // Optionally update the UI to show a warning
+                    setAnalysisStats(prev => ({
+                      totalOpportunities: prev?.totalOpportunities || 0,
+                      productsAnalyzed: prev?.productsAnalyzed || 0,
+                      exchangeRate: prev?.exchangeRate || EUR_TO_GBP_RATE,
+                      ...prev,
+                      progressMessage: `Warning: ${message.data.error} - Continuing analysis...`
+                    }))
+                  }
+                  break
               }
             } catch (parseError) {
               console.error('Error parsing message:', parseError)
@@ -532,22 +594,41 @@ export default function A2AEUPage() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar onSignOut={handleSignOut} onAddStorefront={() => setShowAddStorefrontModal(true)} />
+      <Sidebar 
+        onSignOut={handleSignOut} 
+        onAddStorefront={() => setShowAddStorefrontModal(true)}
+      />
       
       <div className="flex-1 overflow-auto">
         <div className="p-8">
           {/* Header */}
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">A2A EU Deals</h1>
-            <p className="text-gray-600">Find profitable Amazon UK to EU arbitrage opportunities</p>
+          <div className="mb-8 flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">A2A EU Deals</h1>
+              <p className="text-gray-600">Find profitable Amazon UK to EU arbitrage opportunities</p>
+            </div>
+            <button
+              onClick={() => {
+                const recentScansElement = document.getElementById('recent-scans')
+                if (recentScansElement) {
+                  recentScansElement.scrollIntoView({ behavior: 'smooth' })
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors"
+            >
+              <ClockIcon className="w-4 h-4" />
+              Recent Scans
+            </button>
           </div>
 
           {/* Saved Scans Inline */}
-          <SavedScansInline 
-            onLoadScan={(scanId) => {
-              loadScanResults(scanId)
-            }}
-          />
+          <div id="recent-scans">
+            <SavedScansInline 
+              onLoadScan={(scanId) => {
+                loadScanResults(scanId)
+              }}
+            />
+          </div>
 
           {/* Storefront Selector */}
           {!loading && storefronts.length > 0 && (
@@ -744,14 +825,35 @@ export default function A2AEUPage() {
               </div>
               
               {analysisStats && (
-                <div className="mt-4 space-y-2">
+                <div className="mt-4 space-y-3">
+                  {/* Time Estimate Banner */}
+                  {analyzing && analysisStats.estimatedMinutesRemaining !== undefined && (
+                    <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <ClockIcon className="w-5 h-5 text-indigo-600" />
+                          <span className="text-sm font-medium text-indigo-900">
+                            Estimated time: ~{analysisStats.estimatedMinutesRemaining} minute{analysisStats.estimatedMinutesRemaining > 1 ? 's' : ''}
+                          </span>
+                        </div>
+                        {analysisStats.processedCount !== undefined && analysisStats.totalProducts && (
+                          <span className="text-sm text-indigo-700">
+                            {analysisStats.processedCount} / {analysisStats.totalProducts} products
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
                   {/* Progress Bar */}
                   {analyzing && analysisStats.progress !== undefined && (
-                    <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
                       <div 
-                        className="bg-gradient-to-r from-violet-500 to-indigo-500 h-2 rounded-full transition-all duration-300" 
+                        className="bg-gradient-to-r from-violet-500 to-indigo-500 h-2.5 rounded-full transition-all duration-300 relative" 
                         style={{ width: `${analysisStats.progress}%` }}
-                      ></div>
+                      >
+                        <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                      </div>
                     </div>
                   )}
                   
@@ -760,8 +862,11 @@ export default function A2AEUPage() {
                     <p className="text-sm text-gray-700 font-medium">{analysisStats.progressMessage}</p>
                   )}
                   
-                  <div className="text-sm text-gray-600">
-                    <p>Found {analysisStats.totalOpportunities} opportunities</p>
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <p className="flex items-center gap-2">
+                      <SparklesIcon className="w-4 h-4 text-green-600" />
+                      Found {analysisStats.totalOpportunities} opportunities
+                    </p>
                     {analysisStats.productsAnalyzed > 0 && (
                       <p>Analysed {analysisStats.productsAnalyzed} products</p>
                     )}
@@ -775,7 +880,9 @@ export default function A2AEUPage() {
           {/* No Storefronts Message */}
           {!loading && storefronts.length === 0 && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
-              <p className="text-gray-600 mb-4">You don&apos;t have any storefronts yet.</p>
+              <BuildingStorefrontIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Storefronts Found</h3>
+              <p className="text-gray-600 mb-4">You don&apos;t have any storefronts yet. Add your first storefront to start analysing deals.</p>
               <button
                 onClick={() => setShowAddStorefrontModal(true)}
                 className="px-4 py-2 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-xl font-medium hover:from-violet-600 hover:to-indigo-600 transition"
@@ -1001,24 +1108,76 @@ export default function A2AEUPage() {
                               <span className="text-indigo-600">@ {opp.storefronts[0].name}</span>
                             )}
                           </div>
+                          
+                          {/* Sales and Rank Info */}
+                          <div className="flex items-center gap-4 mt-3 mb-3 p-2 bg-gray-50 rounded-lg">
+                            <div className="flex items-center gap-2">
+                              <div className="p-1 bg-blue-100 rounded">
+                                <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                </svg>
+                              </div>
+                              <div>
+                                <span className="text-xs text-gray-600 font-medium">UK Sales Rank:</span>
+                                <span className="text-sm font-bold text-gray-900 ml-1">
+                                  {opp.ukSalesRank > 0 ? `#${opp.ukSalesRank.toLocaleString()}` : 'No rank data'}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="p-1 bg-green-100 rounded">
+                                <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                </svg>
+                              </div>
+                              <div>
+                                <span className="text-xs text-gray-600 font-medium">Est. Sales/month:</span>
+                                <span className="text-sm font-bold text-green-600 ml-1">
+                                  {opp.salesPerMonth && opp.salesPerMonth > 0 
+                                    ? opp.salesPerMonth.toLocaleString()
+                                    : opp.ukSalesRank > 0 
+                                      ? `~${formatSalesEstimate(estimateMonthlySalesFromRank(opp.ukSalesRank))}`
+                                      : 'No data'
+                                  }
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          
                           <div className="flex gap-6 mt-2">
                             <a
                               href={`https://www.amazon.co.uk/dp/${opp.asin}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-blue-600 hover:underline text-sm"
+                              className="text-blue-600 hover:underline text-sm flex items-center gap-1"
                             >
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.94-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                              </svg>
                               View on Amazon UK
                             </a>
                             <a
                               href={`https://keepa.com/#!product/1-${opp.asin}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-orange-600 hover:underline text-sm"
+                              className="text-orange-600 hover:underline text-sm flex items-center gap-1"
                             >
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+                              </svg>
                               Keepa Charts
                             </a>
-                            <button className="text-purple-600 hover:underline text-sm">SAS</button>
+                            <a
+                              href={`https://sas.selleramp.com/sas/lookup/?searchterm=${opp.asin}&sas_cost_price=${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)}&sas_sale_price=${(opp.targetPrice || 0).toFixed(2)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-purple-600 hover:underline text-sm flex items-center gap-1"
+                            >
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                              </svg>
+                              SAS
+                            </a>
                           </div>
                         </div>
                       </div>
@@ -1279,11 +1438,6 @@ export default function A2AEUPage() {
                                           </div>
                                         </div>
                                         
-                                        <div class="note">
-                                          <strong>Note:</strong> This breakdown shows actual fee data from Amazon's SP-API response. 
-                                          All fees are calculated by Amazon based on the product category, size, weight, and current rates. 
-                                          Digital Services Fee may vary based on seller type and product category. All prices exclude VAT.
-                                        </div>
                                         
                                         <div style="text-align: center; margin-top: 20px;">
                                           <button onclick="window.close()" style="
@@ -1436,23 +1590,6 @@ export default function A2AEUPage() {
                       </div>
                     </div>
 
-                    {/* Bottom calculation summary */}
-                    <div className="mt-6 pt-6 border-t border-gray-100 grid grid-cols-3 gap-4 text-center">
-                      <div>
-                        <p className="text-sm text-gray-500">Amazon Fees</p>
-                        <p className="font-semibold text-gray-900">£{(opp.amazonFees || 0).toFixed(2)}</p>
-                        <p className="text-xs text-green-600 mt-1">SP-API</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-500">Cost of Goods</p>
-                        <p className="font-semibold text-gray-900">£{(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-500">VAT on Fees</p>
-                        <p className="font-semibold text-gray-900">£{((opp.amazonFees || 0) * 0.2).toFixed(2)}</p>
-                        <p className="text-xs text-green-600 mt-1">Reclaimable</p>
-                      </div>
-                    </div>
                   </div>
                 </div>
                 );

@@ -69,12 +69,40 @@ export async function POST(request: NextRequest) {
       envCheck.values.supabaseServiceKey
     );
 
+    // Create abort controller for client disconnection handling
+    const abortController = new AbortController();
+
     // Create streaming response
     const stream = new ReadableStream({
       async start(controller) {
+      let isControllerClosed = false;
+      
+      // Track controller state
+      const originalClose = controller.close.bind(controller);
+      controller.close = () => {
+        isControllerClosed = true;
+        originalClose();
+      };
+      
       const sendMessage = (message: StreamMessage) => {
-        const data = `data: ${JSON.stringify(message)}\n\n`;
-        controller.enqueue(new TextEncoder().encode(data));
+        // Check if controller is closed before sending
+        if (isControllerClosed) {
+          console.log('[STREAM] Controller is closed, skipping message:', message.type);
+          return;
+        }
+        
+        try {
+          const data = `data: ${JSON.stringify(message)}\n\n`;
+          controller.enqueue(new TextEncoder().encode(data));
+        } catch (error: any) {
+          // Handle controller closed errors gracefully
+          if (error.code === 'ERR_INVALID_STATE' || error.message?.includes('Controller is already closed')) {
+            console.log('[STREAM] Controller closed during message send');
+            isControllerClosed = true;
+          } else {
+            console.error('[STREAM] Error sending message:', error);
+          }
+        }
       };
 
       let scanId: string | null = null;
@@ -176,9 +204,23 @@ export async function POST(request: NextRequest) {
           });
         }
 
+        // Calculate estimated time based on rate limits
+        // Each product needs: 5 pricing requests (one per marketplace) + 1 fee request
+        // Pricing: 2 seconds between marketplace requests (to avoid bursts)
+        // Fees: 1 request per second
+        const estimatedSecondsPerProduct = 3; // Conservative estimate accounting for API delays
+        const totalEstimatedSeconds = Math.ceil(products.length * estimatedSecondsPerProduct);
+        const estimatedMinutes = Math.ceil(totalEstimatedSeconds / 60);
+        
         sendMessage({ 
           type: 'progress', 
-          data: { step: `Loaded ${products.length} products, starting EU pricing analysis...`, progress: 10 } 
+          data: { 
+            step: `Loaded ${products.length} products, starting EU pricing analysis...`, 
+            progress: 10,
+            totalProducts: products.length,
+            estimatedTimeMinutes: estimatedMinutes,
+            startTime: Date.now()
+          } 
         });
 
         // Initialize SP-API clients
@@ -213,14 +255,27 @@ export async function POST(request: NextRequest) {
         let opportunitiesFound = 0;
 
         for (let i = 0; i < products.length; i += batchSize) {
+          // Log if client disconnected but continue processing
+          if (isControllerClosed || abortController.signal.aborted) {
+            console.log('[STREAM] Client disconnected, but continuing scan for database storage');
+          }
+          
           const batch = products.slice(i, i + batchSize);
           const asins = batch.map(p => p.asin);
+          
+          // Calculate time remaining for batch messages
+          const remainingProductsAtBatch = products.length - i;
+          const estimatedSecondsRemainingAtBatch = Math.ceil(remainingProductsAtBatch * estimatedSecondsPerProduct);
+          const estimatedMinutesRemainingAtBatch = Math.ceil(estimatedSecondsRemainingAtBatch / 60);
           
           sendMessage({ 
             type: 'progress', 
             data: { 
               step: `Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(products.length/batchSize)}...`, 
-              progress: 20 + (i / products.length) * 60 
+              progress: 20 + (i / products.length) * 60,
+              processedCount: i,
+              totalProducts: products.length,
+              estimatedMinutesRemaining: estimatedMinutesRemainingAtBatch
             } 
           });
 
@@ -307,6 +362,7 @@ export async function POST(request: NextRequest) {
             // Process each ASIN in this batch
             const pricingEntries = Array.from(pricingByAsin.entries());
             for (const [asin, marketplacePrices] of pricingEntries) {
+              // Continue processing even if client disconnected - we want to save results
               const product = products.find(p => p.asin === asin);
               
               if (!product || !marketplacePrices.UK) {
@@ -316,7 +372,9 @@ export async function POST(request: NextRequest) {
 
               const ukPrice = marketplacePrices.UK.price;
               const ukCompetitors = marketplacePrices.UK.numberOfOffers;
-              const ukSalesRank = marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
+              // Use sales rank from database first, fallback to SP-API data
+              const ukSalesRank = product.current_sales_rank || marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
+              const salesPerMonth = product.sales_per_month || 0;
 
               try {
                 // Ensure minimum interval between fees requests (1 request per second)
@@ -431,33 +489,39 @@ export async function POST(request: NextRequest) {
                   if (bestOpportunity && bestOpportunity.profit > 0) {
                     opportunitiesFound++;
                     
-                    // Save opportunity to database
+                    // Always save opportunity to database first (even if client disconnected)
                     if (scanId) {
-                      await supabase
-                        .from('arbitrage_opportunities')
-                        .insert({
-                          scan_id: scanId,
-                          asin,
-                          product_name: product.product_name || asin,
-                          product_image: product.image_link || '',
-                          target_price: ukPrice,
-                          amazon_fees: amazonFees,
-                          referral_fee: referralFee,
-                          digital_services_fee: 0, // Included in total amazon_fees from SP-API
-                          uk_competitors: ukCompetitors,
-                          uk_sales_rank: ukSalesRank,
-                          best_source_marketplace: bestOpportunity.marketplace,
-                          best_source_price: bestOpportunity.sourcePrice,
-                          best_source_price_gbp: bestOpportunity.sourcePriceGBP,
-                          best_profit: bestOpportunity.profit,
-                          best_roi: bestOpportunity.roi,
-                          all_marketplace_prices: { euPrices },
-                          storefronts: [{ 
-                            id: storefront.id, 
-                            name: storefront.name, 
-                            seller_id: storefront.seller_id 
-                          }]
-                        });
+                      try {
+                        await supabase
+                          .from('arbitrage_opportunities')
+                          .insert({
+                            scan_id: scanId,
+                            asin,
+                            product_name: product.product_name || asin,
+                            product_image: product.image_link || '',
+                            target_price: ukPrice,
+                            amazon_fees: amazonFees,
+                            referral_fee: referralFee,
+                            digital_services_fee: 0, // Included in total amazon_fees from SP-API
+                            uk_competitors: ukCompetitors,
+                            uk_sales_rank: ukSalesRank,
+                            sales_per_month: salesPerMonth,
+                            best_source_marketplace: bestOpportunity.marketplace,
+                            best_source_price: bestOpportunity.sourcePrice,
+                            best_source_price_gbp: bestOpportunity.sourcePriceGBP,
+                            best_profit: bestOpportunity.profit,
+                            best_roi: bestOpportunity.roi,
+                            all_marketplace_prices: { euPrices },
+                            storefronts: [{ 
+                              id: storefront.id, 
+                              name: storefront.name, 
+                              seller_id: storefront.seller_id 
+                            }]
+                          });
+                      } catch (dbError) {
+                        console.error('[DB] Failed to save opportunity:', dbError);
+                        // Continue processing even if individual opportunity save fails
+                      }
                     }
                     
                     // Ensure netRevenue is calculated
@@ -476,10 +540,12 @@ export async function POST(request: NextRequest) {
                       netRevenue,
                       ukCompetitors,
                       ukSalesRank,
+                      salesPerMonth,
                       euPrices: euPrices.sort((a, b) => b.roi - a.roi),
                       bestOpportunity
                     };
 
+                    // Only send message if client is still connected
                     sendMessage({ 
                       type: 'opportunity', 
                       data: opportunity 
@@ -601,9 +667,43 @@ export async function POST(request: NextRequest) {
                         }
                       }
 
-                      // If profitable, send opportunity
+                      // If profitable, save and send opportunity
                       if (bestOpportunity && bestOpportunity.profit > 0) {
                         opportunitiesFound++;
+                        
+                        // Always save to database first (even if client disconnected)
+                        if (scanId) {
+                          try {
+                            await supabase
+                              .from('arbitrage_opportunities')
+                              .insert({
+                                scan_id: scanId,
+                                asin,
+                                product_name: product.product_name || asin,
+                                product_image: product.image_link || '',
+                                target_price: ukPrice,
+                                amazon_fees: amazonFees,
+                                referral_fee: referralFee,
+                                digital_services_fee: 0, // Included in total amazon_fees from SP-API
+                                uk_competitors: ukCompetitors,
+                                uk_sales_rank: ukSalesRank,
+                                sales_per_month: salesPerMonth,
+                                best_source_marketplace: bestOpportunity.marketplace,
+                                best_source_price: bestOpportunity.sourcePrice,
+                                best_source_price_gbp: bestOpportunity.sourcePriceGBP,
+                                best_profit: bestOpportunity.profit,
+                                best_roi: bestOpportunity.roi,
+                                all_marketplace_prices: { euPrices },
+                                storefronts: [{ 
+                                  id: storefront.id, 
+                                  name: storefront.name, 
+                                  seller_id: storefront.seller_id 
+                                }]
+                              });
+                          } catch (dbError) {
+                            console.error('[DB] Failed to save opportunity (retry):', dbError);
+                          }
+                        }
                         
                         const opportunity = {
                           asin,
@@ -618,10 +718,12 @@ export async function POST(request: NextRequest) {
                           netRevenue,
                           ukCompetitors,
                           ukSalesRank,
+                          salesPerMonth,
                           euPrices: euPrices.sort((a, b) => b.roi - a.roi),
                           bestOpportunity
                         };
 
+                        // Only send message if client is still connected
                         sendMessage({ 
                           type: 'opportunity', 
                           data: opportunity 
@@ -641,11 +743,21 @@ export async function POST(request: NextRequest) {
               // Update progress every 5 products for smooth updates
               if (processedCount % 5 === 0 || processedCount === products.length) {
                 const progress = 20 + (processedCount / products.length) * 70;
+                
+                // Calculate time remaining
+                const remainingProducts = products.length - processedCount;
+                const estimatedSecondsRemaining = Math.ceil(remainingProducts * estimatedSecondsPerProduct);
+                const estimatedMinutesRemaining = Math.ceil(estimatedSecondsRemaining / 60);
+                
                 sendMessage({ 
                   type: 'progress', 
                   data: { 
                     step: `Analyzed ${processedCount}/${products.length} products, found ${opportunitiesFound} opportunities`, 
-                    progress 
+                    progress,
+                    processedCount,
+                    totalProducts: products.length,
+                    opportunitiesFound,
+                    estimatedMinutesRemaining
                   } 
                 });
               }
@@ -719,16 +831,29 @@ export async function POST(request: NextRequest) {
             .eq('id', scanId);
         }
       } finally {
-        controller.close();
+        if (!isControllerClosed) {
+          try {
+            controller.close();
+          } catch (error) {
+            console.log('[STREAM] Controller already closed in finally block');
+          }
+        }
       }
     }
   });
+
+    // Handle client disconnection
+    request.signal.addEventListener('abort', () => {
+      console.log('[STREAM] Client request aborted');
+      abortController.abort();
+    });
 
     return new Response(stream, {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no', // Disable Nginx buffering
       },
     });
   } catch (error) {

@@ -86,9 +86,20 @@ export async function POST(request: NextRequest) {
   // Create streaming response
   const stream = new ReadableStream({
     async start(controller) {
+      let controllerClosed = false;
+      
       const sendMessage = (message: StreamMessage) => {
-        const data = `data: ${JSON.stringify(message)}\n\n`;
-        controller.enqueue(new TextEncoder().encode(data));
+        if (controllerClosed) {
+          console.warn('Attempted to send message after controller closed:', message);
+          return;
+        }
+        try {
+          const data = `data: ${JSON.stringify(message)}\n\n`;
+          controller.enqueue(new TextEncoder().encode(data));
+        } catch (error) {
+          console.error('Error sending message:', error);
+          controllerClosed = true;
+        }
       };
 
       let scanId: string | null = null;
@@ -204,6 +215,8 @@ export async function POST(request: NextRequest) {
             // Get UK pricing
             const ukPricingData = await competitivePricingClient.getCompetitivePricing([asin], MARKETPLACES.UK.id);
             
+            console.log(`Raw UK pricing data for ${asin}:`, JSON.stringify(ukPricingData, null, 2));
+            
             if (!ukPricingData || ukPricingData.length === 0) {
               console.log(`No UK pricing found for ${asin}`);
               continue;
@@ -212,19 +225,33 @@ export async function POST(request: NextRequest) {
             const ukProduct = ukPricingData[0];
             let ukPrice = 0;
             
-            // Extract price from competitive pricing data
-            if (ukProduct.competitivePricing?.competitivePrices) {
-              const priceData = ukProduct.competitivePricing.competitivePrices.find(
-                (cp: any) => cp.competitivePriceId === '1'
-              ) || ukProduct.competitivePricing.competitivePrices[0];
+            // Log the competitive pricing structure
+            console.log(`UK product competitive pricing for ${asin}:`, JSON.stringify(ukProduct.competitivePricing, null, 2));
+            
+            // Extract price from competitive pricing data - handle both camelCase and PascalCase
+            const competitivePricing = ukProduct.competitivePricing || ukProduct.CompetitivePricing;
+            
+            if (competitivePricing?.competitivePrices || competitivePricing?.CompetitivePrices) {
+              const competitivePrices = competitivePricing.competitivePrices || competitivePricing.CompetitivePrices;
+              console.log(`Found ${competitivePrices.length} competitive prices`);
               
-              if (priceData?.price) {
-                ukPrice = priceData.price.amount || 0;
+              const priceData = competitivePrices.find(
+                (cp: any) => cp.competitivePriceId === '1' || cp.CompetitivePriceId === '1'
+              ) || competitivePrices[0];
+              
+              console.log(`Selected price data:`, JSON.stringify(priceData, null, 2));
+              
+              if (priceData?.Price?.ListingPrice?.Amount) {
+                ukPrice = parseFloat(priceData.Price.ListingPrice.Amount);
+              } else if (priceData?.price?.amount) {
+                ukPrice = priceData.price.amount;
+              } else if (priceData?.Price?.LandedPrice?.Amount) {
+                ukPrice = parseFloat(priceData.Price.LandedPrice.Amount);
               }
             }
             
             if (!ukPrice || ukPrice <= 0) {
-              console.log(`No valid UK price for ${asin}`);
+              console.log(`No valid UK price for ${asin} - extracted price: ${ukPrice}`);
               continue;
             }
             
@@ -301,14 +328,21 @@ export async function POST(request: NextRequest) {
                   const euProduct = euPricingData[0];
                   let euPrice = 0;
                   
-                  // Extract price from competitive pricing data
-                  if (euProduct.competitivePricing?.competitivePrices) {
-                    const priceData = euProduct.competitivePricing.competitivePrices.find(
-                      (cp: any) => cp.competitivePriceId === '1'
-                    ) || euProduct.competitivePricing.competitivePrices[0];
+                  // Extract price from competitive pricing data - handle both camelCase and PascalCase
+                  const competitivePricing = euProduct.competitivePricing || euProduct.CompetitivePricing;
+                  
+                  if (competitivePricing?.competitivePrices || competitivePricing?.CompetitivePrices) {
+                    const competitivePrices = competitivePricing.competitivePrices || competitivePricing.CompetitivePrices;
+                    const priceData = competitivePrices.find(
+                      (cp: any) => cp.competitivePriceId === '1' || cp.CompetitivePriceId === '1'
+                    ) || competitivePrices[0];
                     
-                    if (priceData?.price) {
-                      euPrice = priceData.price.amount || 0;
+                    if (priceData?.Price?.ListingPrice?.Amount) {
+                      euPrice = parseFloat(priceData.Price.ListingPrice.Amount);
+                    } else if (priceData?.price?.amount) {
+                      euPrice = priceData.price.amount;
+                    } else if (priceData?.Price?.LandedPrice?.Amount) {
+                      euPrice = parseFloat(priceData.Price.LandedPrice.Amount);
                     }
                   }
                   
@@ -365,9 +399,11 @@ export async function POST(request: NextRequest) {
                   referralFee,
                   fbaFee,
                   digitalServicesFee,
-                  ukCompetitors: ukProduct.competitivePricing?.numberOfOfferListings?.find(
-                    (l: any) => l.condition === 'New'
-                  )?.count || 0,
+                  ukCompetitors: competitivePricing?.numberOfOfferListings?.find(
+                    (l: any) => l.condition === 'New' || l.Condition === 'New'
+                  )?.count || competitivePricing?.NumberOfOfferListings?.find(
+                    (l: any) => l.condition === 'New' || l.Condition === 'New'  
+                  )?.Count || 0,
                   ukLowestPrice: ukPrice,
                   ukSalesRank: salesRank,
                   euPrices,
@@ -388,9 +424,11 @@ export async function POST(request: NextRequest) {
                   amazon_fees: totalUKFees.toString(),
                   referral_fee: referralFee.toString(),
                   digital_services_fee: digitalServicesFee.toString(),
-                  uk_competitors: ukProduct.competitivePricing?.numberOfOfferListings?.find(
-                    (l: any) => l.condition === 'New'
-                  )?.count || 0,
+                  uk_competitors: competitivePricing?.numberOfOfferListings?.find(
+                    (l: any) => l.condition === 'New' || l.Condition === 'New'
+                  )?.count || competitivePricing?.NumberOfOfferListings?.find(
+                    (l: any) => l.condition === 'New' || l.Condition === 'New'
+                  )?.Count || 0,
                   uk_sales_rank: salesRank,
                   best_source_marketplace: bestOpportunity.marketplace,
                   best_source_price: bestOpportunity.sourcePrice.toString(),
@@ -447,7 +485,12 @@ export async function POST(request: NextRequest) {
           } 
         });
       } finally {
-        controller.close();
+        controllerClosed = true;
+        try {
+          controller.close();
+        } catch (error) {
+          console.error('Error closing controller:', error);
+        }
       }
     }
   });

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
+import Link from 'next/link'
 import { 
   ClockIcon,
   ArrowPathIcon,
@@ -157,6 +158,12 @@ export default function SavedScansInline({ onLoadScan }: SavedScansInlineProps) 
           <div className="flex items-center justify-between mt-4 mb-4">
             <p className="text-sm text-gray-600">View and load previous scan results</p>
             <div className="flex items-center gap-3">
+              <Link 
+                href="/dashboard/recent-scans"
+                className="text-sm text-indigo-600 hover:text-indigo-700 font-medium hover:underline"
+              >
+                View All Recent Scans
+              </Link>
               <div className="relative">
                 <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input

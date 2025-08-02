@@ -54,14 +54,30 @@ export default function StorefrontsPage() {
 
   useEffect(() => {
     const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
+      try {
+        const { data: { user }, error } = await supabase.auth.getUser()
+        console.log('Storefronts - Auth check:', { user: user?.id, error })
+        
+        if (error) {
+          console.error('Storefronts - Auth error:', error)
+          router.push('/')
+          return
+        }
+        
+        if (!user) {
+          console.log('Storefronts - No user found, redirecting to login')
+          router.push('/')
+        } else {
+          console.log('Storefronts - User authenticated, fetching data')
+          setUser(user)
+          fetchStorefronts()
+        }
+      } catch (error) {
+        console.error('Storefronts - Error checking user:', error)
         router.push('/')
-      } else {
-        setUser(user)
-        fetchStorefronts()
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     }
     checkUser()
   }, [router])

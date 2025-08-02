@@ -51,8 +51,17 @@ export default function ProductsPage() {
 
   const fetchProducts = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      console.log('Products - Auth check:', { user: user?.id, authError })
+      
+      if (authError) {
+        console.error('Products - Auth error:', authError)
+        router.push('/')
+        return
+      }
+      
       if (!user) {
+        console.log('Products - No user found, redirecting to login')
         router.push('/')
         return
       }

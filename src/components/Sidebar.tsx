@@ -10,14 +10,16 @@ import {
   PlusIcon,
   CubeIcon,
   GlobeEuropeAfricaIcon,
-  MagnifyingGlassIcon
+  MagnifyingGlassIcon,
+  ClockIcon
 } from '@heroicons/react/24/outline'
 import { 
   HomeIcon as HomeIconSolid,
   BuildingStorefrontIcon as BuildingStorefrontIconSolid,
   CubeIcon as CubeIconSolid,
   GlobeEuropeAfricaIcon as GlobeEuropeAfricaIconSolid,
-  MagnifyingGlassIcon as MagnifyingGlassIconSolid
+  MagnifyingGlassIcon as MagnifyingGlassIconSolid,
+  ClockIcon as ClockIconSolid
 } from '@heroicons/react/24/solid'
 
 interface SidebarProps {
@@ -30,6 +32,7 @@ const navigation = [
   { name: 'Storefronts', href: '/dashboard/storefronts', icon: BuildingStorefrontIcon, iconActive: BuildingStorefrontIconSolid },
   { name: 'All Products', href: '/dashboard/products', icon: CubeIcon, iconActive: CubeIconSolid },
   { name: 'A2A EU', href: '/dashboard/a2a-eu', icon: GlobeEuropeAfricaIcon, iconActive: GlobeEuropeAfricaIconSolid },
+  { name: 'Recent Scans', href: '/dashboard/recent-scans', icon: ClockIcon, iconActive: ClockIconSolid },
   { name: 'ASIN Checker', href: '/dashboard/asin-checker', icon: MagnifyingGlassIcon, iconActive: MagnifyingGlassIconSolid },
 ]
 
