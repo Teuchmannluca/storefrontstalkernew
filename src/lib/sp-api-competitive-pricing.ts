@@ -159,10 +159,11 @@ class CompetitivePricingRateLimiter {
   private lastRequestTime: Map<string, number> = new Map();
   
   // Rate limits per endpoint
+  // Updated to match actual SP-API limits for competitive pricing
   private rateLimits = {
-    getCompetitivePricing: { rate: 0.5, burst: 1 }, // 0.5 req/sec, burst of 1
-    getItemOffers: { rate: 0.5, burst: 1 }, // 0.5 req/sec, burst of 1
-    getItemOffersBatch: { rate: 0.5, burst: 1 } // 0.5 req/sec, burst of 1
+    getCompetitivePricing: { rate: 0.5, burst: 2 }, // 0.5 req/sec (1 per 2 seconds) to stay under quota
+    getItemOffers: { rate: 0.5, burst: 2 }, // 0.5 req/sec
+    getItemOffersBatch: { rate: 0.5, burst: 2 } // 0.5 req/sec
   };
 
   async acquire(endpoint: keyof typeof this.rateLimits): Promise<void> {

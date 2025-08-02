@@ -24,6 +24,7 @@ import {
 import { Menu, Transition } from '@headlessui/react'
 import { Fragment } from 'react'
 import SyncButton from '@/components/SyncButton'
+import { useSyncStatus } from '@/contexts/SyncStatusContext'
 
 interface Storefront {
   id: string
@@ -49,6 +50,7 @@ export default function StorefrontsPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [isUpdatingAll, setIsUpdatingAll] = useState(false)
   const router = useRouter()
+  const { addSyncOperation, updateSyncOperation } = useSyncStatus()
 
   useEffect(() => {
     const checkUser = async () => {
@@ -119,6 +121,20 @@ export default function StorefrontsPage() {
     if (!confirmUpdate) return
 
     setIsUpdatingAll(true)
+    const operationId = `bulk-update-${Date.now()}`
+    
+    // Add operation to global status
+    addSyncOperation({
+      id: operationId,
+      type: 'bulk_update',
+      storefront: `All Storefronts (${storefronts.length})`,
+      status: 'active',
+      message: 'Starting bulk update process...',
+      progress: {
+        current: 0,
+        total: storefronts.length
+      }
+    })
     
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -136,7 +152,11 @@ export default function StorefrontsPage() {
       }
 
       const result = await response.json()
-      alert(result.message || 'Update process started. This will run in the background.')
+      
+      updateSyncOperation(operationId, {
+        status: 'completed',
+        message: 'Bulk update process started. Running in background...'
+      })
       
       // Refresh storefronts after a delay
       setTimeout(() => {
@@ -144,7 +164,10 @@ export default function StorefrontsPage() {
       }, 5000)
     } catch (error) {
       console.error('Error updating storefronts:', error)
-      alert('Failed to start update process')
+      updateSyncOperation(operationId, {
+        status: 'error',
+        message: 'Failed to start update process'
+      })
     } finally {
       setIsUpdatingAll(false)
     }
@@ -258,6 +281,29 @@ export default function StorefrontsPage() {
             </div>
 
             <div className="flex items-center gap-3">
+              {/* Test Status Bar Button - Remove this after testing */}
+              <button
+                onClick={() => {
+                  const testId = `test-${Date.now()}`
+                  addSyncOperation({
+                    id: testId,
+                    type: 'storefront_sync',
+                    storefront: 'Test Storefront',
+                    status: 'active',
+                    message: 'Testing status bar functionality...'
+                  })
+                  setTimeout(() => {
+                    updateSyncOperation(testId, {
+                      status: 'completed',
+                      message: 'Test completed successfully!'
+                    })
+                  }, 3000)
+                }}
+                className="px-4 py-2 bg-purple-500 text-white rounded-xl text-sm font-medium hover:bg-purple-600"
+              >
+                Test Status Bar
+              </button>
+              
               {/* Sort Dropdown */}
               <Menu as="div" className="relative">
                 <Menu.Button className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">

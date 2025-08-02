@@ -3,8 +3,20 @@ import { SPAPIProductFeesClient } from '@/lib/sp-api-product-fees';
 
 // UK VAT rates and constants
 const UK_VAT_RATE = 0.20; // 20% VAT
-const DIGITAL_SERVICES_FEE_RATE = 0.02; // 2% digital services fee
+const DIGITAL_SERVICES_FEE_RATE = 0.02; // 2% digital services fee on item price + shipping
 const FBA_FULFILLMENT_BASE_FEE = 2.25; // Base FBA fulfillment fee for standard items
+
+// Fee type constants from SP-API
+const AMAZON_FEE_TYPES = {
+  REFERRAL_FEE: 'ReferralFee',
+  FBA_FULFILLMENT_FEE: 'FBAFulfillmentFee',
+  FBA_PICK_PACK_FEE: 'FBAPickAndPackFee',
+  FBA_WEIGHT_HANDLING_FEE: 'FBAWeightHandlingFee',
+  VARIABLE_CLOSING_FEE: 'VariableClosingFee',
+  PER_ITEM_FEE: 'PerItemFee',
+  CLOSING_FEE: 'ClosingFee',
+  HIGH_VOLUME_LISTING_FEE: 'HighVolumeListingFee'
+} as const;
 
 interface ComprehensiveFeesRequest {
   asin: string;
@@ -19,6 +31,7 @@ interface ComprehensiveFeesRequest {
   category?: string;
   fulfillmentMethod?: 'FBA' | 'FBM';
   isVatRegistered?: boolean;
+  pricesIncludeVat?: boolean; // New field to specify VAT treatment
 }
 
 interface ComprehensiveFeesResponse {
@@ -36,8 +49,18 @@ interface ComprehensiveFeesResponse {
       storageFee: number;
       total: number;
     };
+    variableClosingFee: number;
+    fixedClosingFee: number;
     digitalServicesFee: number;
+    otherFees: number;
     totalAmazonFees: number;
+    breakdown: {
+      type: string;
+      amount: number;
+      feeAmount: number;
+      promotion: number;
+      tax: number;
+    }[];
   };
   vat: {
     vatOnSale: number;
@@ -51,6 +74,7 @@ interface ComprehensiveFeesResponse {
     totalCosts: number;
     grossProfit: number;
     netProfit: number;
+    totalProfit?: number; // Same as netProfit, kept for compatibility
     profitMargin: number;
     roi: number;
   };
@@ -70,9 +94,9 @@ export async function POST(request: NextRequest) {
       asin,
       sellPrice,
       costPrice,
-      weight = 500, // Default 500g
       fulfillmentMethod = 'FBA',
-      isVatRegistered = true
+      isVatRegistered = true,
+      pricesIncludeVat = true // Default to VAT-inclusive prices
     } = body;
 
     if (!asin || !sellPrice || !costPrice) {
@@ -107,112 +131,149 @@ export async function POST(request: NextRequest) {
       }
     };
 
-    // First try without FBA parameter to get basic fees
-    let feesEstimate = await feesClient.getMyFeesEstimateForASIN(
+    // Get Amazon fees from SP-API with IsAmazonFulfilled flag
+    const isAmazonFulfilled = fulfillmentMethod === 'FBA';
+    console.log(`Getting fees for ASIN ${asin}, price: ${sellPrice}, FBA: ${isAmazonFulfilled}`);
+    
+    const feesEstimate = await feesClient.getMyFeesEstimateForASIN(
       asin,
       priceToEstimateFees,
-      config.marketplaceId
+      config.marketplaceId,
+      undefined,
+      isAmazonFulfilled
     );
 
-    // If that fails, or if we specifically want FBA fees, try with FBA parameter
-    if (fulfillmentMethod === 'FBA' && feesEstimate.status === 'Success') {
-      try {
-        const fbaFeesEstimate = await feesClient.getMyFeesEstimateForASIN(
-          asin,
-          priceToEstimateFees,
-          config.marketplaceId,
-          undefined,
-          'FBA_CORE'
-        );
-        if (fbaFeesEstimate.status === 'Success') {
-          feesEstimate = fbaFeesEstimate;
-        }
-      } catch (fbaError) {
-        console.log('FBA fees not available for this ASIN, using standard fees');
-      }
-    }
-
     if (feesEstimate.status !== 'Success' || !feesEstimate.feesEstimate) {
+      console.error('Fee estimate failed:', JSON.stringify(feesEstimate, null, 2));
       return NextResponse.json(
-        { error: 'Failed to get fees estimate from Amazon SP-API' },
+        { 
+          error: 'Failed to get fees estimate from Amazon SP-API',
+          details: feesEstimate.error || 'No fee estimate returned',
+          status: feesEstimate.status
+        },
         { status: 500 }
       );
     }
 
-    // Extract fees from SP-API response
+// Extract EXACT fees from SP-API response
     let referralFee = 0;
     let fbaFulfillmentFee = 0;
     let variableClosingFee = 0;
-    let perItemFee = 0;
+    let fixedClosingFee = 0;
+    let digitalServicesFee = 0;
+    let otherFees = 0;
 
     const feeDetails = feesEstimate.feesEstimate.feeDetailList || [];
     
+    console.log('Raw fee details from SP-API:', JSON.stringify(feeDetails, null, 2));
+    
+    // Parse all fee types returned by SP-API
     for (const fee of feeDetails) {
+      const feeAmount = fee.finalFee.amount;
+      console.log(`Processing fee: ${fee.feeType} = ${feeAmount} ${fee.finalFee.currencyCode}`);
+      
       switch (fee.feeType) {
         case 'ReferralFee':
-          referralFee = fee.finalFee.amount;
+          referralFee = feeAmount;
           break;
-        case 'FBAFulfillmentFee':
-        case 'FBAPickAndPackFee':
-        case 'FBAWeightHandlingFee':
-          fbaFulfillmentFee += fee.finalFee.amount;
+        case 'FBAFees':
+        case 'FulfillmentFees':
+        case 'FBAPerUnitFulfillmentFee':
+        case 'FBAPerOrderFulfillmentFee':
+          fbaFulfillmentFee += feeAmount;
           break;
         case 'VariableClosingFee':
-          variableClosingFee = fee.finalFee.amount;
+          variableClosingFee = feeAmount;
           break;
         case 'PerItemFee':
-          perItemFee = fee.finalFee.amount;
+        case 'FixedClosingFee':
+          fixedClosingFee += feeAmount;
           break;
+        default:
+          // Capture any other fees including potential digital services fee
+          if (fee.feeType.toLowerCase().includes('digital')) {
+            digitalServicesFee = feeAmount;
+          } else {
+            console.log(`Other fee type: ${fee.feeType} = ${feeAmount}`);
+            otherFees += feeAmount;
+          }
       }
     }
 
-    // Calculate additional fees not always included in SP-API
-    const digitalServicesFee = sellPrice * DIGITAL_SERVICES_FEE_RATE;
-    
-    // Calculate FBA storage fee (estimated monthly based on item size/weight)
-    const estimatedMonthlyStorageFee = fulfillmentMethod === 'FBA' ? 
-      Math.max(0.1, (weight / 1000) * 0.75) : 0; // £0.75 per kg per month
-
-    // Total Amazon fees
-    const totalAmazonFees = referralFee + fbaFulfillmentFee + variableClosingFee + 
-                           perItemFee + digitalServicesFee + estimatedMonthlyStorageFee;
-
-    // VAT Calculations
-    let vatOnSale = 0;
-    let vatOnFees = 0;
-    
-    if (isVatRegistered) {
-      // VAT on the sale (seller collects this, but it reduces net revenue)
-      vatOnSale = sellPrice * UK_VAT_RATE;
-      
-      // VAT on Amazon fees (seller pays this on top of fees)
-      vatOnFees = totalAmazonFees * UK_VAT_RATE;
+    // Digital Services Tax is 2% of the item price (UK specific)
+    // Only calculate if not returned by SP-API
+    if (digitalServicesFee === 0) {
+      digitalServicesFee = sellPrice * DIGITAL_SERVICES_FEE_RATE;
     }
 
-    const totalVat = vatOnSale + vatOnFees;
+    // Total Amazon fees (excluding DST which is paid separately)
+    const totalAmazonFees = referralFee + fbaFulfillmentFee + variableClosingFee + fixedClosingFee + otherFees;
 
-    // Profitability calculations
+// VAT Calculations
+    let vatOnFees = 0;
+    let vatOnSale = 0;
+    
+    if (isVatRegistered) {
+      // VAT on Amazon fees (reclaimable input VAT - this IS a business expense)
+      vatOnFees = totalAmazonFees * UK_VAT_RATE;
+      
+      // VAT on sale (output VAT - NOT a business expense, just collected for HMRC)
+      if (pricesIncludeVat) {
+        vatOnSale = sellPrice * (UK_VAT_RATE / (1 + UK_VAT_RATE));
+      } else {
+        vatOnSale = sellPrice * UK_VAT_RATE;
+      }
+    }
+
+    // Profit calculation - VAT on sale does NOT affect profit
+    // PROFIT = SALE PRICE - AMAZON FEES - DIGITAL SERVICES TAX - COST OF GOODS - VAT ON FEES
+    const netProfit = sellPrice - totalAmazonFees - digitalServicesFee - costPrice - vatOnFees;
+    
+    // Alternative calculations for reporting
     const grossRevenue = sellPrice;
-    const netRevenue = grossRevenue - totalAmazonFees;
-    const netRevenueAfterVat = netRevenue - vatOnSale;
-    const totalCosts = costPrice + vatOnFees;
-    const grossProfit = netRevenue - costPrice;
-    const netProfit = netRevenueAfterVat - totalCosts;
-    const profitMargin = (netProfit / grossRevenue) * 100;
-    const roi = (netProfit / (costPrice + vatOnFees)) * 100;
+    const netRevenue = grossRevenue - totalAmazonFees - digitalServicesFee;
+    const profitMargin = (netProfit / sellPrice) * 100;
+    const roi = (netProfit / costPrice) * 100;
 
     // Step-by-step breakdown
+    let runningTotal = sellPrice;
     const breakdown = [
-      { step: '1', description: 'Gross Sale Price', amount: sellPrice, runningTotal: sellPrice },
-      { step: '2', description: 'Less: Referral Fee', amount: -referralFee, runningTotal: sellPrice - referralFee },
-      { step: '3', description: 'Less: FBA Fulfillment Fee', amount: -fbaFulfillmentFee, runningTotal: sellPrice - referralFee - fbaFulfillmentFee },
-      { step: '4', description: 'Less: Variable Closing Fee', amount: -variableClosingFee, runningTotal: sellPrice - referralFee - fbaFulfillmentFee - variableClosingFee },
-      { step: '5', description: 'Less: Digital Services Fee (2%)', amount: -digitalServicesFee, runningTotal: sellPrice - referralFee - fbaFulfillmentFee - variableClosingFee - digitalServicesFee },
-      { step: '6', description: 'Less: FBA Storage Fee (est.)', amount: -estimatedMonthlyStorageFee, runningTotal: netRevenue },
-      { step: '7', description: 'Less: VAT on Sale (20%)', amount: -vatOnSale, runningTotal: netRevenueAfterVat },
-      { step: '8', description: 'Less: Cost of Goods', amount: -costPrice, runningTotal: netRevenueAfterVat - costPrice },
-      { step: '9', description: 'Less: VAT on Fees (20%)', amount: -vatOnFees, runningTotal: netProfit },
+      { step: '1', description: 'Sale Price (inc. VAT)', amount: sellPrice, runningTotal },
     ];
+    
+    runningTotal -= referralFee;
+    breakdown.push({ step: '2', description: 'Less: Referral Fee', amount: -referralFee, runningTotal });
+    
+    if (fbaFulfillmentFee > 0) {
+      runningTotal -= fbaFulfillmentFee;
+      breakdown.push({ step: String(breakdown.length + 1), description: 'Less: FBA Fulfillment Fee', amount: -fbaFulfillmentFee, runningTotal });
+    }
+    
+    if (variableClosingFee > 0) {
+      runningTotal -= variableClosingFee;
+      breakdown.push({ step: String(breakdown.length + 1), description: 'Less: Variable Closing Fee', amount: -variableClosingFee, runningTotal });
+    }
+    
+    if (fixedClosingFee > 0) {
+      runningTotal -= fixedClosingFee;
+      breakdown.push({ step: String(breakdown.length + 1), description: 'Less: Fixed Closing Fee', amount: -fixedClosingFee, runningTotal });
+    }
+    
+    if (otherFees > 0) {
+      runningTotal -= otherFees;
+      breakdown.push({ step: String(breakdown.length + 1), description: 'Less: Other Amazon Fees', amount: -otherFees, runningTotal });
+    }
+    
+    runningTotal -= digitalServicesFee;
+    breakdown.push({ step: String(breakdown.length + 1), description: 'Less: Digital Services Tax (2%)', amount: -digitalServicesFee, runningTotal });
+    
+    runningTotal -= costPrice;
+    breakdown.push({ step: String(breakdown.length + 1), description: 'Less: Cost of Goods', amount: -costPrice, runningTotal });
+    
+    runningTotal -= vatOnFees;
+    breakdown.push({ step: String(breakdown.length + 1), description: 'Less: VAT on Amazon Fees (reclaimable)', amount: -vatOnFees, runningTotal });
+    
+    breakdown.push({ step: String(breakdown.length + 1), description: 'NET PROFIT', amount: netProfit, runningTotal: netProfit });
 
     const response: ComprehensiveFeesResponse = {
       success: true,
@@ -224,26 +285,37 @@ export async function POST(request: NextRequest) {
       },
       fees: {
         referralFee,
-        fbaFees: fulfillmentMethod === 'FBA' ? {
+        fbaFees: fbaFulfillmentFee > 0 ? {
           fulfillmentFee: fbaFulfillmentFee,
-          storageFee: estimatedMonthlyStorageFee,
-          total: fbaFulfillmentFee + estimatedMonthlyStorageFee
+          storageFee: 0, // Storage fees are billed separately, not in fee estimates
+          total: fbaFulfillmentFee
         } : undefined,
+        variableClosingFee,
+        fixedClosingFee,
         digitalServicesFee,
-        totalAmazonFees
+        otherFees,
+        totalAmazonFees,
+        breakdown: feeDetails.map(fee => ({
+          type: fee.feeType,
+          amount: fee.finalFee.amount,
+          feeAmount: fee.feeAmount.amount,
+          promotion: fee.feePromotion?.amount || 0,
+          tax: fee.taxAmount?.amount || 0
+        }))
       },
       vat: {
         vatOnSale,
         vatOnFees,
-        totalVat
+        totalVat: vatOnSale + vatOnFees
       },
       profitability: {
         grossRevenue,
         netRevenue,
-        netRevenueAfterVat,
-        totalCosts,
-        grossProfit,
+        netRevenueAfterVat: netRevenue - vatOnSale, // For information only
+        totalCosts: costPrice + totalAmazonFees + digitalServicesFee + vatOnFees,
+        grossProfit: sellPrice - costPrice,
         netProfit,
+        totalProfit: netProfit,
         profitMargin: Math.round(profitMargin * 100) / 100,
         roi: Math.round(roi * 100) / 100
       },
@@ -254,8 +326,16 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('Comprehensive fees calculation error:', error);
+    console.error('Error details:', error.message);
+    if (error.response) {
+      console.error('API response error:', error.response.data);
+    }
     return NextResponse.json(
-      { error: 'Failed to calculate comprehensive fees' },
+      { 
+        error: 'Failed to calculate comprehensive fees',
+        message: error.message,
+        details: error.response?.data || error.toString()
+      },
       { status: 500 }
     );
   }

@@ -4,29 +4,19 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
-import AddStorefrontModal from '@/components/AddStorefrontModal'
-import SavedScansPanel from '@/components/SavedScansPanel'
 import { 
-  ExclamationTriangleIcon,
-  ChevronDownIcon,
   ArrowPathIcon,
   SparklesIcon,
-  UserGroupIcon,
-  ClockIcon,
+  PlusIcon,
+  TrashIcon,
+  DocumentDuplicateIcon,
   CheckCircleIcon,
-  XCircleIcon
+  XCircleIcon,
+  ExclamationTriangleIcon
 } from '@heroicons/react/24/outline'
-import { Fragment } from 'react'
-import { Listbox, Transition } from '@headlessui/react'
 
 // Exchange rate constant
 const EUR_TO_GBP_RATE = 0.86
-
-interface Storefront {
-  id: string
-  name: string
-  seller_id: string
-}
 
 interface EUMarketplacePrice {
   marketplace: string
@@ -52,21 +42,12 @@ interface ArbitrageOpportunity {
   ukSalesRank: number
   euPrices: EUMarketplacePrice[]
   bestOpportunity: EUMarketplacePrice
-  storefronts?: Array<{
-    id: string
-    name: string
-    seller_id: string
-  }>
 }
 
 type SortOption = 'profit' | 'roi' | 'margin' | 'price'
 
-
-export default function A2AEUPage() {
+export default function ASINCheckerPage() {
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([])
-  const [storefronts, setStorefronts] = useState<Storefront[]>([])
-  const [selectedStorefront, setSelectedStorefront] = useState<Storefront | null>(null)
-  const [showAddStorefrontModal, setShowAddStorefrontModal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisStats, setAnalysisStats] = useState<{
@@ -76,52 +57,23 @@ export default function A2AEUPage() {
     progressMessage?: string
     progress?: number
   } | null>(null)
-  const [productCount, setProductCount] = useState<number>(0)
-  const [syncingProducts, setSyncingProducts] = useState(false)
   const [showProfitableOnly, setShowProfitableOnly] = useState(true)
-  const [analyzingAllSellers, setAnalyzingAllSellers] = useState(false)
-  const [showSavedScans, setShowSavedScans] = useState(false)
-  const [viewingSavedScan, setViewingSavedScan] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<SortOption>('profit')
   const [selectedDeals, setSelectedDeals] = useState<Set<string>>(new Set())
+  const [asinInput, setAsinInput] = useState('')
+  const [asinList, setAsinList] = useState<string[]>([])
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
   const router = useRouter()
 
   useEffect(() => {
     checkAuth()
   }, [])
-  
-  useEffect(() => {
-    if (selectedStorefront) {
-      fetchProductCount()
-    }
-  }, [selectedStorefront])
-
 
   const checkAuth = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       router.push('/')
     } else {
-      fetchStorefronts()
-    }
-  }
-
-  const fetchStorefronts = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('storefronts')
-        .select('id, name, seller_id')
-        .order('name')
-
-      if (!error && data) {
-        setStorefronts(data)
-        if (data.length > 0) {
-          setSelectedStorefront(data[0])
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching storefronts:', error)
-    } finally {
       setLoading(false)
     }
   }
@@ -131,258 +83,77 @@ export default function A2AEUPage() {
     router.push('/')
   }
 
-  
-  const loadScanResults = async (scanId: string) => {
+  // Validate ASIN format
+  const validateASIN = (asin: string): boolean => {
+    // Amazon ASIN is 10 characters, alphanumeric
+    const asinRegex = /^[A-Z0-9]{10}$/
+    return asinRegex.test(asin.toUpperCase())
+  }
+
+  // Add ASINs from input
+  const handleAddASINs = () => {
+    const newASINs = asinInput
+      .split(/[\s,\n]+/) // Split by spaces, commas, or newlines
+      .map(asin => asin.trim().toUpperCase())
+      .filter(asin => asin.length > 0)
+    
+    const errors: Record<string, string> = {}
+    const validASINs: string[] = []
+    
+    newASINs.forEach(asin => {
+      if (!validateASIN(asin)) {
+        errors[asin] = 'Invalid ASIN format'
+      } else if (asinList.includes(asin)) {
+        errors[asin] = 'ASIN already added'
+      } else {
+        validASINs.push(asin)
+      }
+    })
+    
+    setValidationErrors(errors)
+    
+    if (validASINs.length > 0) {
+      setAsinList([...asinList, ...validASINs])
+      setAsinInput('')
+    }
+  }
+
+  // Remove ASIN from list
+  const handleRemoveASIN = (asin: string) => {
+    setAsinList(asinList.filter(a => a !== asin))
+    const newErrors = { ...validationErrors }
+    delete newErrors[asin]
+    setValidationErrors(newErrors)
+  }
+
+  // Clear all ASINs
+  const handleClearAll = () => {
+    setAsinList([])
+    setValidationErrors({})
     setOpportunities([])
     setAnalysisStats(null)
-    setViewingSavedScan(scanId)
-    
-    try {
-      // Fetch scan details
-      const { data: scan, error: scanError } = await supabase
-        .from('arbitrage_scans')
-        .select('*')
-        .eq('id', scanId)
-        .single()
-      
-      if (scanError || !scan) {
-        throw new Error('Failed to load scan')
-      }
-      
-      // Fetch opportunities for this scan
-      const { data: opportunities, error: oppsError } = await supabase
-        .from('arbitrage_opportunities')
-        .select('*')
-        .eq('scan_id', scanId)
-        .order('best_roi', { ascending: false })
-      
-      if (oppsError) {
-        throw new Error('Failed to load opportunities')
-      }
-      
-      // Transform the opportunities to match the expected format
-      const transformedOpportunities: ArbitrageOpportunity[] = opportunities.map(opp => ({
-        asin: opp.asin,
-        productName: opp.product_name || opp.asin,
-        productImage: opp.product_image || '',
-        targetPrice: parseFloat(opp.target_price || '0'),
-        amazonFees: parseFloat(opp.amazon_fees || '0'),
-        referralFee: parseFloat(opp.referral_fee || '0'),
-        fbaFee: 0, // Not stored in DB
-        digitalServicesFee: parseFloat(opp.digital_services_fee || '0'),
-        ukCompetitors: opp.uk_competitors || 0,
-        ukLowestPrice: parseFloat(opp.target_price || '0'), // Using target price as lowest
-        ukSalesRank: opp.uk_sales_rank || 0,
-        euPrices: opp.all_marketplace_prices?.euPrices || [],
-        bestOpportunity: {
-          marketplace: opp.best_source_marketplace || 'EU',
-          sourcePrice: parseFloat(opp.best_source_price || '0'),
-          sourcePriceGBP: parseFloat(opp.best_source_price_gbp || '0'),
-          profit: parseFloat(opp.best_profit || '0'),
-          profitMargin: 0, // Calculate if needed
-          roi: parseFloat(opp.best_roi || '0'),
-          totalCost: parseFloat(opp.best_source_price_gbp || '0') + parseFloat(opp.amazon_fees || '0') + parseFloat(opp.digital_services_fee || '0')
-        },
-        storefronts: opp.storefronts || []
-      }))
-      
-      setOpportunities(transformedOpportunities)
-      
-      // Set analysis stats from the scan
-      setAnalysisStats({
-        totalOpportunities: scan.opportunities_found || 0,
-        productsAnalyzed: scan.total_products || 0,
-        exchangeRate: scan.metadata?.exchange_rate || EUR_TO_GBP_RATE,
-        progressMessage: `Loaded ${scan.opportunities_found || 0} opportunities from ${new Date(scan.started_at).toLocaleString('en-GB')}`,
-        progress: 100
-      })
-      
-    } catch (error: any) {
-      console.error('Error loading scan results:', error)
-      alert(`Failed to load scan results: ${error.message}`)
-    }
-  }
-  
-  const fetchProductCount = async () => {
-    if (!selectedStorefront) return
-    
-    try {
-      const { count } = await supabase
-        .from('products')
-        .select('*', { count: 'exact', head: true })
-        .eq('storefront_id', selectedStorefront.id)
-      
-      setProductCount(count || 0)
-    } catch (error) {
-      console.error('Error fetching product count:', error)
-    }
-  }
-  
-  const syncProducts = async () => {
-    if (!selectedStorefront) return
-    
-    setSyncingProducts(true)
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error('No session found')
-      
-      const response = await fetch('/api/sync-storefront-keepa', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({
-          storefrontId: selectedStorefront.id,
-          sellerId: selectedStorefront.seller_id
-        })
-      })
-      
-      const data = await response.json()
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Sync failed')
-      }
-      
-      alert(`Successfully synced ${data.productsAdded} products!`)
-      await fetchProductCount()
-      
-    } catch (error: any) {
-      console.error('Sync error:', error)
-      alert(`Failed to sync products: ${error.message}`)
-    } finally {
-      setSyncingProducts(false)
-    }
   }
 
-  const analyzeAllSellers = async () => {
-    setAnalyzingAllSellers(true)
-    setOpportunities([])
-    setAnalysisStats(null)
-    setViewingSavedScan(null)
-    
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error('No session found')
-      
-      const response = await fetch('/api/arbitrage/analyze-all-sellers', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        }
-      })
-      
-      if (!response.ok) {
-        throw new Error('Failed to start analysis')
-      }
-
-      const reader = response.body?.getReader()
-      if (!reader) throw new Error('No response stream')
-
-      const decoder = new TextDecoder()
-      let opportunityCount = 0
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n')
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const message = JSON.parse(line.slice(6))
-              
-              switch (message.type) {
-                case 'progress':
-                  setAnalysisStats(prev => ({
-                    totalOpportunities: opportunityCount,
-                    productsAnalyzed: 0,
-                    exchangeRate: EUR_TO_GBP_RATE,
-                    ...prev,
-                    progressMessage: message.data.step,
-                    progress: message.data.progress
-                  }))
-                  break
-                  
-                case 'opportunity':
-                  opportunityCount++
-                  setOpportunities(prev => {
-                    const newOpportunities = [...prev, message.data]
-                    // Sort by best ROI
-                    return newOpportunities.sort((a, b) => b.bestOpportunity.roi - a.bestOpportunity.roi)
-                  })
-                  setAnalysisStats(prev => ({
-                    totalOpportunities: opportunityCount,
-                    productsAnalyzed: prev?.productsAnalyzed || 0,
-                    exchangeRate: EUR_TO_GBP_RATE,
-                    progressMessage: prev?.progressMessage,
-                    progress: prev?.progress
-                  }))
-                  break
-                  
-                case 'complete':
-                  setAnalysisStats(prev => ({
-                    ...prev,
-                    totalOpportunities: message.data.opportunitiesFound,
-                    productsAnalyzed: message.data.totalProducts,
-                    exchangeRate: EUR_TO_GBP_RATE,
-                    progressMessage: message.data.message,
-                    progress: 100
-                  }))
-                  break
-                  
-                case 'error':
-                  console.error('Analysis error:', message.data.error)
-                  alert(message.data.error)
-                  setAnalyzingAllSellers(false)
-                  // Update analysis stats to show error
-                  setAnalysisStats({
-                    totalOpportunities: 0,
-                    productsAnalyzed: 0,
-                    exchangeRate: EUR_TO_GBP_RATE,
-                    progressMessage: `Error: ${message.data.error}`,
-                    progress: 0
-                  })
-                  return // Exit the stream processing
-              }
-            } catch (parseError) {
-              console.error('Error parsing message:', parseError)
-            }
-          }
-        }
-      }
-      
-    } catch (error: any) {
-      console.error('Analysis error:', error)
-      alert(`Failed to analyze all sellers: ${error.message}`)
-    } finally {
-      setAnalyzingAllSellers(false)
-    }
-  }
-
-  const analyzeArbitrage = async () => {
-    if (!selectedStorefront) return
+  // Analyze ASINs for arbitrage
+  const analyzeASINs = async () => {
+    if (asinList.length === 0) return
     
     setAnalyzing(true)
     setOpportunities([])
     setAnalysisStats(null)
-    setViewingSavedScan(null)
     
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('No session found')
       
-      const response = await fetch('/api/arbitrage/analyze-stream', {
+      const response = await fetch('/api/arbitrage/analyze-asins', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`
         },
         body: JSON.stringify({
-          storefrontId: selectedStorefront.id
+          asins: asinList
         })
       })
       
@@ -412,7 +183,7 @@ export default function A2AEUPage() {
                 case 'progress':
                   setAnalysisStats(prev => ({
                     totalOpportunities: opportunityCount,
-                    productsAnalyzed: 0,
+                    productsAnalyzed: message.data.current || 0,
                     exchangeRate: EUR_TO_GBP_RATE,
                     ...prev,
                     progressMessage: message.data.step,
@@ -451,7 +222,6 @@ export default function A2AEUPage() {
                   console.error('Analysis error:', message.data.error)
                   alert(message.data.error)
                   setAnalyzing(false)
-                  // Update analysis stats to show error
                   setAnalysisStats({
                     totalOpportunities: 0,
                     productsAnalyzed: 0,
@@ -459,7 +229,7 @@ export default function A2AEUPage() {
                     progressMessage: `Error: ${message.data.error}`,
                     progress: 0
                   })
-                  return // Exit the stream processing
+                  return
               }
             } catch (parseError) {
               console.error('Error parsing message:', parseError)
@@ -470,30 +240,10 @@ export default function A2AEUPage() {
       
     } catch (error: any) {
       console.error('Analysis error:', error)
-      alert(`Failed to analyze arbitrage opportunities: ${error.message}`)
+      alert(`Failed to analyze ASINs: ${error.message}`)
     } finally {
       setAnalyzing(false)
     }
-  }
-  
-  const getCountryFlag = (marketplace: string) => {
-    const flags: { [key: string]: string } = {
-      'DE': '🇩🇪',
-      'FR': '🇫🇷',
-      'IT': '🇮🇹',
-      'ES': '🇪🇸'
-    }
-    return flags[marketplace] || marketplace
-  }
-  
-  const getAmazonDomain = (marketplace: string) => {
-    const domains: { [key: string]: string } = {
-      'DE': 'de',
-      'FR': 'fr',
-      'IT': 'it',
-      'ES': 'es'
-    }
-    return domains[marketplace] || 'com'
   }
 
   // Calculate summary statistics
@@ -526,237 +276,178 @@ export default function A2AEUPage() {
         return 0
     }
   })
+  
+  const getCountryFlag = (marketplace: string) => {
+    const flags: { [key: string]: string } = {
+      'DE': '🇩🇪',
+      'FR': '🇫🇷',
+      'IT': '🇮🇹',
+      'ES': '🇪🇸'
+    }
+    return flags[marketplace] || marketplace
+  }
+  
+  const getAmazonDomain = (marketplace: string) => {
+    const domains: { [key: string]: string } = {
+      'DE': 'de',
+      'FR': 'fr',
+      'IT': 'it',
+      'ES': 'es'
+    }
+    return domains[marketplace] || 'com'
+  }
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar onSignOut={handleSignOut} onAddStorefront={() => setShowAddStorefrontModal(true)} />
+      <Sidebar onSignOut={handleSignOut} />
       
       <div className="flex-1 overflow-auto">
         <div className="p-8">
           {/* Header */}
           <div className="mb-8">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">A2A EU Deals</h1>
-                <p className="text-gray-600">Find profitable Amazon UK to EU arbitrage opportunities</p>
-              </div>
-              <button
-                onClick={() => setShowSavedScans(!showSavedScans)}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
-              >
-                <ClockIcon className="w-5 h-5" />
-                {showSavedScans ? 'Hide' : 'Show'} Saved Scans
-              </button>
-            </div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">ASIN Checker</h1>
+            <p className="text-gray-600">Check specific ASINs for Amazon UK to EU arbitrage opportunities</p>
           </div>
 
-          {/* Saved Scans Panel */}
-          {showSavedScans && (
-            <SavedScansPanel 
-              onLoadScan={(scanId) => {
-                loadScanResults(scanId)
-                setShowSavedScans(false)
-              }}
-              onClose={() => setShowSavedScans(false)}
-            />
-          )}
-
-          {/* Storefront Selector */}
-          {!loading && storefronts.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select Storefront
-              </label>
-              <Listbox value={selectedStorefront} onChange={setSelectedStorefront}>
-                <div className="relative">
-                  <Listbox.Button className="relative w-full cursor-pointer rounded-xl bg-white py-3 pl-4 pr-10 text-left border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
-                    <span className="block truncate">
-                      {selectedStorefront ? (
-                        <>
-                          <span className="font-medium">{selectedStorefront.name}</span>
-                          <span className="text-gray-500 ml-2">({selectedStorefront.seller_id})</span>
-                        </>
-                      ) : (
-                        'Select a storefront'
-                      )}
-                    </span>
-                    <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
-                      <ChevronDownIcon className="h-5 w-5 text-gray-400" aria-hidden="true" />
-                    </span>
-                  </Listbox.Button>
-                  <Transition
-                    as={Fragment}
-                    leave="transition ease-in duration-100"
-                    leaveFrom="opacity-100"
-                    leaveTo="opacity-0"
-                  >
-                    <Listbox.Options className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-xl bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
-                      {storefronts.map((storefront) => (
-                        <Listbox.Option
-                          key={storefront.id}
-                          className={({ active }) =>
-                            `relative cursor-pointer select-none py-3 pl-4 pr-4 ${
-                              active ? 'bg-indigo-50 text-indigo-900' : 'text-gray-900'
-                            }`
-                          }
-                          value={storefront}
-                        >
-                          {({ selected }) => (
-                            <>
-                              <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>
-                                {storefront.name}
-                              </span>
-                              <span className="text-gray-500 text-sm">
-                                Seller ID: {storefront.seller_id}
-                              </span>
-                            </>
-                          )}
-                        </Listbox.Option>
-                      ))}
-                    </Listbox.Options>
-                  </Transition>
-                </div>
-              </Listbox>
+          {/* ASIN Input Section */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Add ASINs to Check</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Enter ASINs (comma-separated or one per line)
+                </label>
+                <textarea
+                  value={asinInput}
+                  onChange={(e) => setAsinInput(e.target.value)}
+                  placeholder="B08N5WRWNW, B Echo (4th Echo Dot (5B09B8V1QH, ..."
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  rows={4}
+                />
+              </div>
               
-              {/* Product Count and Sync */}
-              {selectedStorefront && (
-                <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-gray-600">
-                      Products in storefront: <span className="font-medium text-gray-900">{productCount}</span>
-                    </span>
-                    <button
-                      onClick={syncProducts}
-                      disabled={syncingProducts}
-                      className="text-sm text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50"
-                    >
-                      {syncingProducts ? 'Syncing...' : 'Sync Products'}
-                    </button>
-                  </div>
-                  
-                  {productCount === 0 && (
-                    <p className="text-xs text-amber-600">
-                      No products found. Click "Synchronise Products" to fetch ASINs from Amazon.
-                    </p>
-                  )}
-                </div>
-              )}
-              
-              {/* Debug: Check Tables */}
-              <div className="mt-2">
+              <div className="flex items-center gap-3">
                 <button
-                  onClick={async () => {
-                    const res = await fetch('/api/check-arbitrage-tables')
-                    const data = await res.json()
-                    console.log('Table check:', data)
-                    if (!data.tablesExist?.arbitrage_scans || !data.tablesExist?.arbitrage_opportunities) {
-                      alert('⚠️ Database tables are missing!\n\nPlease run the SQL in supabase/create_arbitrage_scans_tables.sql in your Supabase SQL editor.')
-                    } else {
-                      alert('✅ All tables exist and are ready!')
-                    }
-                  }}
-                  className="text-xs text-gray-500 hover:text-gray-700 underline"
+                  onClick={handleAddASINs}
+                  disabled={!asinInput.trim()}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                 >
-                  Check Database Tables
+                  <PlusIcon className="w-5 h-5" />
+                  Add ASINs
+                </button>
+                
+                <button
+                  onClick={() => {
+                    // Example ASINs for testing
+                    setAsinInput('B09B8V1QH5, B004Q097PA, B00HSMMFK6, B0C4Z69NG3, B08N5WRWNW')
+                  }}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors flex items-center gap-2"
+                >
+                  <DocumentDuplicateIcon className="w-5 h-5" />
+                  Load Example ASINs
                 </button>
               </div>
               
-              {/* Analyze Buttons */}
-              <div className="mt-4 space-y-3">
-                {/* Single Storefront Analysis */}
+              {/* Validation Errors */}
+              {Object.keys(validationErrors).length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  <p className="text-sm font-medium text-red-800 mb-1">Invalid ASINs:</p>
+                  {Object.entries(validationErrors).map(([asin, error]) => (
+                    <p key={asin} className="text-sm text-red-600">
+                      {asin}: {error}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ASIN List */}
+          {asinList.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  ASINs to Check ({asinList.length})
+                </h3>
                 <button
-                  onClick={analyzeArbitrage}
-                  disabled={!selectedStorefront || analyzing || productCount === 0}
+                  onClick={handleClearAll}
+                  className="text-sm text-red-600 hover:text-red-700 font-medium"
+                >
+                  Clear All
+                </button>
+              </div>
+              
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {asinList.map((asin) => (
+                  <div key={asin} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                    <span className="font-mono text-sm">{asin}</span>
+                    <button
+                      onClick={() => handleRemoveASIN(asin)}
+                      className="text-gray-400 hover:text-red-600 transition-colors"
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              
+              <div className="mt-6">
+                <button
+                  onClick={analyzeASINs}
+                  disabled={analyzing || asinList.length === 0}
                   className="w-full px-6 py-3 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-xl font-medium hover:from-violet-600 hover:to-indigo-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {analyzing ? (
                     <>
                       <ArrowPathIcon className="h-5 w-5 animate-spin" />
-                      Analyzing Products...
-                    </>
-                  ) : productCount === 0 ? (
-                    <>
-                      <ExclamationTriangleIcon className="h-5 w-5" />
-                      Sync Products First
+                      Analyzing ASINs...
                     </>
                   ) : (
                     <>
                       <SparklesIcon className="h-5 w-5" />
-                      Analyze Selected Storefront
+                      Analyze {asinList.length} ASINs
                     </>
                   )}
                 </button>
                 
-                {/* All Sellers Analysis */}
-                <button
-                  onClick={analyzeAllSellers}
-                  disabled={analyzing || analyzingAllSellers || storefronts.length === 0}
-                  className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-medium hover:from-green-600 hover:to-emerald-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {analyzingAllSellers ? (
-                    <>
-                      <ArrowPathIcon className="h-5 w-5 animate-spin" />
-                      Analyzing All Sellers...
-                    </>
-                  ) : (
-                    <>
-                      <UserGroupIcon className="h-5 w-5" />
-                      Analyze All Sellers ({storefronts.length} storefronts)
-                    </>
-                  )}
-                </button>
-              </div>
-              
-              {analysisStats && (
-                <div className="mt-4 space-y-2">
-                  {/* Progress Bar */}
-                  {analyzing && analysisStats.progress !== undefined && (
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div 
-                        className="bg-gradient-to-r from-violet-500 to-indigo-500 h-2 rounded-full transition-all duration-300" 
-                        style={{ width: `${analysisStats.progress}%` }}
-                      ></div>
-                    </div>
-                  )}
-                  
-                  {/* Progress Message */}
-                  {analysisStats.progressMessage && (
-                    <p className="text-sm text-gray-700 font-medium">{analysisStats.progressMessage}</p>
-                  )}
-                  
-                  <div className="text-sm text-gray-600">
-                    <p>Found {analysisStats.totalOpportunities} opportunities</p>
-                    {analysisStats.productsAnalyzed > 0 && (
-                      <p>Analysed {analysisStats.productsAnalyzed} products</p>
+                {analysisStats && (
+                  <div className="mt-4 space-y-2">
+                    {/* Progress Bar */}
+                    {analyzing && analysisStats.progress !== undefined && (
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div 
+                          className="bg-gradient-to-r from-violet-500 to-indigo-500 h-2 rounded-full transition-all duration-300" 
+                          style={{ width: `${analysisStats.progress}%` }}
+                        ></div>
+                      </div>
                     )}
-                    <p>Exchange rate: €1 = £{analysisStats.exchangeRate}</p>
+                    
+                    {/* Progress Message */}
+                    {analysisStats.progressMessage && (
+                      <p className="text-sm text-gray-700 font-medium">{analysisStats.progressMessage}</p>
+                    )}
+                    
+                    <div className="text-sm text-gray-600">
+                      <p>Found {analysisStats.totalOpportunities} opportunities</p>
+                      {analysisStats.productsAnalyzed > 0 && (
+                        <p>Analyzed {analysisStats.productsAnalyzed} products</p>
+                      )}
+                      <p>Exchange rate: €1 = £{analysisStats.exchangeRate}</p>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
 
-          {/* No Storefronts Message */}
-          {!loading && storefronts.length === 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
-              <p className="text-gray-600 mb-4">You don't have any storefronts yet.</p>
-              <button
-                onClick={() => setShowAddStorefrontModal(true)}
-                className="px-4 py-2 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-xl font-medium hover:from-violet-600 hover:to-indigo-600 transition"
-              >
-                Add Your First Storefront
-              </button>
-            </div>
-          )}
-
-
-          {/* Results Section */}
+          {/* Results Section - Same as A2A EU page */}
           {opportunities.length > 0 && (
             <div className="space-y-6">
               {/* Summary Header */}
               <div className="bg-gradient-to-r from-violet-500 to-indigo-500 rounded-2xl p-6 text-white">
                 <h2 className="text-2xl font-bold mb-4">
-                  Deals 
+                  Analysis Results 
                   {analyzing && <span className="text-violet-200">(Live Updates)</span>}
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -849,7 +540,7 @@ export default function A2AEUPage() {
                         <button
                           onClick={() => {
                             const selectedOpps = sortedOpportunities.filter(opp => selectedDeals.has(opp.asin));
-                            let bulkMessage = `🎯 *A2A EU Bulk Deals* (${selectedOpps.length} items)\n\n`;
+                            let bulkMessage = `🎯 *ASIN Checker Results* (${selectedOpps.length} items)\n\n`;
                             let totalProfit = 0;
                             
                             selectedOpps.forEach((opp, index) => {
@@ -879,24 +570,11 @@ export default function A2AEUPage() {
                         </button>
                       </>
                     )}
-                    
-                    {viewingSavedScan && (
-                      <button
-                        onClick={() => {
-                          setViewingSavedScan(null)
-                          setOpportunities([])
-                          setAnalysisStats(null)
-                        }}
-                        className="px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 border border-gray-300 hover:bg-gray-200 transition-all"
-                      >
-                        Clear Results
-                      </button>
-                    )}
                   </div>
                 </div>
               </div>
-              
-              {/* Filter opportunities based on profit toggle */}
+
+              {/* Opportunity Cards - Same as A2A EU */}
               {(() => {
                 const filteredOpportunities = sortedOpportunities.filter(
                   opp => !showProfitableOnly || (opp.bestOpportunity && opp.bestOpportunity.profit > 0)
@@ -961,9 +639,6 @@ export default function A2AEUPage() {
                           <h3 className="font-semibold text-gray-900 text-lg line-clamp-2 mb-2">{opp.productName}</h3>
                           <div className="flex items-center gap-4 text-sm text-gray-500">
                             <span>{opp.asin}</span>
-                            {opp.storefronts && opp.storefronts.length > 0 && (
-                              <span className="text-indigo-600">@ {opp.storefronts[0].name}</span>
-                            )}
                           </div>
                           <div className="flex gap-6 mt-2">
                             <a
@@ -1018,7 +693,7 @@ export default function A2AEUPage() {
                         <button
                           onClick={() => {
                             const message = encodeURIComponent(
-                              `🎯 *A2A EU Deal*\n\n` +
+                              `🎯 *ASIN Check Result*\n\n` +
                               `📦 *Product:* ${opp.productName}\n` +
                               `🔗 *ASIN:* ${opp.asin}\n\n` +
                               `💰 *Profit:* £${(opp.bestOpportunity?.profit || 0).toFixed(2)} (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
@@ -1060,7 +735,6 @@ export default function A2AEUPage() {
                         <p className="text-sm text-gray-500">Ex-VAT: £{((opp.targetPrice || 0) / 1.2).toFixed(2)}</p>
                       </div>
                     </div>
-
 
                     {/* All EU Marketplace Prices */}
                     <div className="mt-6">
@@ -1165,18 +839,8 @@ export default function A2AEUPage() {
               })()}
             </div>
           )}
-          
         </div>
       </div>
-
-      <AddStorefrontModal
-        isOpen={showAddStorefrontModal}
-        onClose={() => setShowAddStorefrontModal(false)}
-        onSuccess={() => {
-          setShowAddStorefrontModal(false)
-          fetchStorefronts()
-        }}
-      />
     </div>
   )
 }

@@ -366,11 +366,13 @@ export class SPAPIProductFeesClient {
     priceToEstimateFees: PriceToEstimateFees,
     marketplaceId?: string,
     identifier?: string,
-    optionalFulfillmentProgram?: 'FBA_CORE' | 'FBA_SNL' | 'FBA_EFN'
+    isAmazonFulfilled: boolean = false,
+    optionalFulfillmentProgram?: 'FBA_SNL' | 'FBA_PERUNITFULFILLMENT'
   ): Promise<FeesEstimateResult> {
     const body: any = {
       FeesEstimateRequest: {
         MarketplaceId: marketplaceId || this.config.marketplaceId,
+        IsAmazonFulfilled: isAmazonFulfilled,
         Identifier: identifier || `fees-estimate-sku-${sku}-${Date.now()}`,
         PriceToEstimateFees: {
           ListingPrice: {
@@ -421,11 +423,13 @@ export class SPAPIProductFeesClient {
     priceToEstimateFees: PriceToEstimateFees,
     marketplaceId?: string,
     identifier?: string,
-    optionalFulfillmentProgram?: 'FBA_CORE' | 'FBA_SNL' | 'FBA_EFN'
+    isAmazonFulfilled: boolean = false,
+    optionalFulfillmentProgram?: 'FBA_SNL' | 'FBA_PERUNITFULFILLMENT'
   ): Promise<FeesEstimateResult> {
     const body: any = {
       FeesEstimateRequest: {
         MarketplaceId: marketplaceId || this.config.marketplaceId,
+        IsAmazonFulfilled: isAmazonFulfilled,
         Identifier: identifier || `fees-estimate-asin-${asin}-${Date.now()}`,
         PriceToEstimateFees: {
           ListingPrice: {
@@ -465,6 +469,7 @@ export class SPAPIProductFeesClient {
       body
     );
     
+    
     return this.transformFeesEstimateResponse(response.payload.FeesEstimateResult);
   }
   
@@ -478,7 +483,8 @@ export class SPAPIProductFeesClient {
       priceToEstimateFees: PriceToEstimateFees;
       marketplaceId?: string;
       identifier?: string;
-      optionalFulfillmentProgram?: 'FBA_CORE' | 'FBA_SNL' | 'FBA_EFN';
+      isAmazonFulfilled?: boolean;
+      optionalFulfillmentProgram?: 'FBA_SNL' | 'FBA_PERUNITFULFILLMENT';
     }>
   ): Promise<FeesEstimateResult[]> {
     const body = {
@@ -487,6 +493,7 @@ export class SPAPIProductFeesClient {
         IdValue: request.idValue,
         FeesEstimateRequest: {
           MarketplaceId: request.marketplaceId || this.config.marketplaceId,
+          IsAmazonFulfilled: request.isAmazonFulfilled || false,
           PriceToEstimateFees: {
             ListingPrice: {
               CurrencyCode: request.priceToEstimateFees.listingPrice.currencyCode,
