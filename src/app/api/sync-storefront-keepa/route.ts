@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { KeepaStorefrontAPI } from '@/lib/keepa-storefront';
 import { SPAPICatalogClient } from '@/lib/sp-api-catalog';
+import { requireAuth, unauthorizedResponse, serverErrorResponse } from '@/lib/auth-helpers';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -10,6 +11,9 @@ const supabase = createClient(
 
 export async function POST(request: NextRequest) {
   try {
+    // Verify authentication
+    const { user } = await requireAuth();
+    
     const { storefrontId, sellerId } = await request.json();
     
     if (!storefrontId || !sellerId) {

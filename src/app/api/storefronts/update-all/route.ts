@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { requireAuth, unauthorizedResponse, serverErrorResponse } from '@/lib/auth-helpers'
 import { updateStorefront } from '../update/storefront-updater'
 
 // Queue state
@@ -37,16 +37,10 @@ async function processQueue() {
 export async function POST(request: NextRequest) {
   try {
     // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader?.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const token = authHeader.substring(7)
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+    const { user, supabase } = await requireAuth()
     
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
+    if (!user) {
+      return unauthorizedResponse()
     }
 
     // Get all storefronts for the user
@@ -80,9 +74,10 @@ export async function POST(request: NextRequest) {
     }, { status: 200 })
 
   } catch (error) {
+    if (error instanceof Error && error.message === 'Authentication required') {
+      return unauthorizedResponse()
+    }
     console.error('Error starting update process:', error)
-    return NextResponse.json({ 
-      error: 'Failed to start update process' 
-    }, { status: 500 })
+    return serverErrorResponse('Failed to start update process')
   }
 }

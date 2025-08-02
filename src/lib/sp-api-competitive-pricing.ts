@@ -278,7 +278,7 @@ export class SPAPICompetitivePricingClient {
     });
     
     try {
-      console.log('Getting SP-API access token from:', tokenUrl);
+      // Getting SP-API access token
       const response = await axios.post(tokenUrl, params.toString(), {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
@@ -286,7 +286,7 @@ export class SPAPICompetitivePricingClient {
       });
       
       const { access_token, expires_in } = response.data;
-      console.log('Got access token, expires in:', expires_in, 'seconds');
+      // Token obtained successfully
       this.accessToken = access_token;
       this.tokenExpiry = new Date(Date.now() + (expires_in - 60) * 1000);
       
@@ -444,28 +444,10 @@ export class SPAPICompetitivePricingClient {
       'user-agent': 'StorefrontTracker/1.0'
     };
     
-    console.log('Authorization header:', headers['Authorization']);
-    console.log('Signed headers:', signedHeaders);
+    // Request headers prepared with authorization
     
     try {
-      console.log(`SP-API Request: ${method} ${url.toString()}`);
-      console.log('Request details:', {
-        method,
-        url: url.toString(),
-        pathname: url.pathname,
-        search: url.search,
-        queryParams: Object.fromEntries(url.searchParams)
-      });
-      console.log('Headers:', Object.keys(headers).reduce((acc, key) => {
-        if (key === 'Authorization') {
-          acc[key] = 'AWS4-HMAC-SHA256 ***';
-        } else if (key === 'x-amz-access-token') {
-          acc[key] = '***';
-        } else {
-          acc[key] = headers[key];
-        }
-        return acc;
-      }, {} as any));
+      // Making SP-API request
       
       const response = await axios({
         method,
@@ -474,8 +456,7 @@ export class SPAPICompetitivePricingClient {
         ...(method !== 'GET' && body ? { data: body } : {})
       });
       
-      console.log('SP-API Response Status:', response.status);
-      console.log('SP-API Response Data:', response.data);
+      // Response received successfully
       
       return response.data;
     } catch (error: any) {

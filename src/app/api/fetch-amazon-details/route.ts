@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import SPAPIClient from '@/lib/sp-api'
 import KeepaAPI from '@/lib/keepa-api'
 import https from 'https'
+import { requireAuth, unauthorizedResponse, serverErrorResponse } from '@/lib/auth-helpers'
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -12,6 +13,9 @@ const supabase = createClient(
 
 export async function POST(request: NextRequest) {
   try {
+    // Verify authentication
+    const { user } = await requireAuth()
+    
     const { asin, storefrontId } = await request.json()
     
     if (!asin) {
@@ -118,20 +122,20 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error: any) {
+    if (error instanceof Error && error.message === 'Authentication required') {
+      return unauthorizedResponse()
+    }
     console.error('Error fetching Amazon details:', error)
-    return NextResponse.json(
-      { 
-        error: 'Failed to fetch product details',
-        details: error.message 
-      },
-      { status: 500 }
-    )
+    return serverErrorResponse('Failed to fetch product details')
   }
 }
 
 // Batch endpoint for multiple ASINs
 export async function PUT(request: NextRequest) {
   try {
+    // Verify authentication
+    const { user } = await requireAuth()
+    
     const { asins, storefrontId } = await request.json()
     
     if (!asins || !Array.isArray(asins) || asins.length === 0) {
@@ -251,13 +255,10 @@ export async function PUT(request: NextRequest) {
     })
 
   } catch (error: any) {
+    if (error instanceof Error && error.message === 'Authentication required') {
+      return unauthorizedResponse()
+    }
     console.error('Error fetching Amazon details:', error)
-    return NextResponse.json(
-      { 
-        error: 'Failed to fetch product details',
-        details: error.message 
-      },
-      { status: 500 }
-    )
+    return serverErrorResponse('Failed to fetch product details')
   }
 }

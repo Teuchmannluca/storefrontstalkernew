@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
@@ -13,24 +13,67 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const router = useRouter()
 
+  // Check if user is already authenticated on page load
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        window.location.href = '/dashboard'
+      }
+    }
+    checkAuth()
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        window.location.href = '/dashboard'
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
 
+    // Show progress to user
+    setError('🔄 Attempting to sign in...')
+
+    if (!email || !password) {
+      setError('Please enter both email and password')
+      setLoading(false)
+      return
+    }
+
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
-      if (error) throw error
-      router.push('/dashboard')
+      
+      if (error) {
+        throw error
+      }
+      
+      if (data.user && data.session) {
+        setError('✅ Login successful! Redirecting...')
+        
+        // Wait a moment for session to be stored
+        setTimeout(() => {
+          window.location.href = '/dashboard'
+        }, 500)
+      } else {
+        throw new Error('No user data returned')
+      }
+      
     } catch (error: any) {
-      setError(error.message)
-    } finally {
+      setError(`❌ Login failed: ${error.message}`)
       setLoading(false)
     }
   }
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-violet-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
@@ -110,7 +153,11 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm border border-red-100">
+              <div className={`p-3 rounded-xl text-sm border ${
+                error.includes('✅') ? 'bg-green-50 text-green-600 border-green-100' :
+                error.includes('🔄') ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                'bg-red-50 text-red-600 border-red-100'
+              }`}>
                 {error}
               </div>
             )}

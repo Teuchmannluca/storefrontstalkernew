@@ -22,17 +22,34 @@ export default function Dashboard() {
 
   useEffect(() => {
     const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        router.push('/')
-      } else {
+      try {
+        const { data: { user }, error } = await supabase.auth.getUser()
+        if (error || !user) {
+          console.error('Authentication error:', error)
+          window.location.href = '/'
+          return
+        }
         setUser(user)
-        fetchProductsCount()
+        await fetchProductsCount()
+      } catch (error) {
+        console.error('Failed to check user:', error)
+        window.location.href = '/'
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     }
+    
     checkUser()
-  }, [router])
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        window.location.href = '/'
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
 
   const fetchProductsCount = async () => {
     const { count, error } = await supabase

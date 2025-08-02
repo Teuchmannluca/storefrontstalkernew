@@ -84,7 +84,7 @@ export class AmazonSPAPISimple {
       // Set expiry to 50 minutes (tokens last 1 hour)
       this.tokenExpiry = new Date(Date.now() + 50 * 60 * 1000)
       
-      console.log('Got new access token')
+      // Access token obtained
       return this.accessToken!
     } catch (error: any) {
       console.error('Error getting access token:', error.response?.data || error.message)
