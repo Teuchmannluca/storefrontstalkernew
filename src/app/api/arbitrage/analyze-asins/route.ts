@@ -335,7 +335,7 @@ export async function POST(request: NextRequest) {
                 
                 if (ukPricing && ukPricing.length > 0) {
                   const product = ukPricing[0];
-                  const competitivePrices = product.competitivePricing?.CompetitivePrices || [];
+                  const competitivePrices = product.competitivePricing?.competitivePrices || [];
                   
                   // IMPORTANT: Filter out USED products - only consider NEW condition
                   const newConditionPrices = competitivePrices.filter(
@@ -365,9 +365,9 @@ export async function POST(request: NextRequest) {
                           price: price,
                           currency: currency,
                           priceType: buyBoxPrice ? 'buy_box' : (featuredPrice ? 'featured_offer' : 'first_available'),
-                          numberOfOffers: product.competitivePricing?.NumberOfOfferListings?.find(
+                          numberOfOffers: product.competitivePricing?.numberOfOfferListings?.find(
                             (l: any) => l.condition === 'New'
-                          )?.Count || 0,
+                          )?.count || 0,
                           salesRankings: product.salesRankings
                         };
                       }
@@ -413,7 +413,7 @@ export async function POST(request: NextRequest) {
                   
                   if (euPricing && euPricing.length > 0) {
                     const product = euPricing[0];
-                    const competitivePrices = product.competitivePricing?.CompetitivePrices || [];
+                    const competitivePrices = product.competitivePricing?.competitivePrices || [];
                     
                     // Filter for NEW condition only
                     const newConditionPrices = competitivePrices.filter(

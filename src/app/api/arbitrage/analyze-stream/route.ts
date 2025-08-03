@@ -398,7 +398,7 @@ export async function POST(request: NextRequest) {
                 }
                 
                 // SP-API returns CompetitivePrices array with different structure
-                const competitivePrices = product.competitivePricing?.CompetitivePrices || [];
+                const competitivePrices = product.competitivePricing?.competitivePrices || [];
                 
                 // IMPORTANT: Filter out USED products - only consider NEW condition
                 const newConditionPrices = competitivePrices.filter(
@@ -460,9 +460,9 @@ export async function POST(request: NextRequest) {
                       currency: currency,
                       priceType: buyBoxPrice ? 'buy_box' : (featuredPrice ? 'featured_offer' : 'first_available'),
                       competitivePriceId: priceData.CompetitivePriceId,
-                      numberOfOffers: product.competitivePricing?.NumberOfOfferListings?.find(
+                      numberOfOffers: product.competitivePricing?.numberOfOfferListings?.find(
                         (l: any) => l.condition === 'New'
-                      )?.Count || 0,
+                      )?.count || 0,
                       salesRankings: product.salesRankings
                     };
                   }

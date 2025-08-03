@@ -375,7 +375,7 @@ export async function POST(request: NextRequest) {
                 }
 
                 // Calculate fees for UK selling price
-                const ukPrice = ukPricing.competitivePricing.CompetitivePrices?.[0]?.Price?.ListingPrice?.Amount;
+                const ukPrice = ukPricing.competitivePricing.competitivePrices?.[0]?.Price?.ListingPrice?.Amount;
                 if (!ukPrice || ukPrice <= 0) {
                   processedCount++;
                   continue;
@@ -427,11 +427,11 @@ export async function POST(request: NextRequest) {
                   if (countryCode === 'UK') continue;
 
                   const countryPricing = asinPrices[countryCode];
-                  if (!countryPricing?.competitivePricing?.CompetitivePrices?.[0]?.Price?.ListingPrice?.Amount) {
+                  if (!countryPricing?.competitivePricing?.competitivePrices?.[0]?.Price?.ListingPrice?.Amount) {
                     continue;
                   }
 
-                  const sourcePrice = countryPricing.competitivePricing.CompetitivePrices[0].Price.ListingPrice.Amount;
+                  const sourcePrice = countryPricing.competitivePricing.competitivePrices[0].Price.ListingPrice.Amount;
                   const sourcePriceGBP = sourcePrice * EUR_TO_GBP_RATE;
                   const totalCost = sourcePriceGBP + amazonFees + digitalServicesFee;
                   const profit = ukPrice - totalCost;

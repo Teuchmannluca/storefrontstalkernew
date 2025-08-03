@@ -411,21 +411,21 @@ export async function POST(request: NextRequest) {
                   pricingByAsin.set(asin, {});
                 }
                 
-                let priceData = product.competitivePricing?.CompetitivePrices?.find(
+                let priceData = product.competitivePricing?.competitivePrices?.find(
                   (cp: any) => cp.CompetitivePriceId === '1'
                 );
                 
-                if (!priceData && product.competitivePricing?.CompetitivePrices?.length > 0) {
-                  priceData = product.competitivePricing.CompetitivePrices[0];
+                if (!priceData && product.competitivePricing?.competitivePrices?.length > 0) {
+                  priceData = product.competitivePricing.competitivePrices[0];
                 }
                 
                 if (priceData && priceData.Price) {
                   pricingByAsin.get(asin)[country] = {
                     price: priceData.Price.ListingPrice?.Amount || priceData.Price.LandedPrice?.Amount,
                     currency: priceData.Price.ListingPrice?.CurrencyCode,
-                    numberOfOffers: product.competitivePricing?.NumberOfOfferListings?.find(
+                    numberOfOffers: product.competitivePricing?.numberOfOfferListings?.find(
                       (l: any) => l.condition === 'New'
-                    )?.Count || 0,
+                    )?.count || 0,
                     salesRankings: product.salesRankings
                   };
                 }
