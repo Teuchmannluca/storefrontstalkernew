@@ -15,7 +15,13 @@ import { IArbitrageScanRepository } from '@/domain/interfaces/IArbitrageScanRepo
 
 // External Services
 import { AmazonSPAPIAdapter } from '@/infrastructure/external-apis/AmazonSPAPIAdapter';
+import { ResilientPricingAdapter } from '@/infrastructure/external-apis/ResilientPricingAdapter';
 import { IExternalPricingService } from '@/domain/interfaces/IExternalPricingService';
+
+// SP-API Infrastructure
+import { SPAPIQuotaManager } from '@/infrastructure/sp-api/QuotaManager';
+import { EnhancedSPAPIRateLimiter } from '@/infrastructure/sp-api/EnhancedRateLimiter';
+import { ResilientSPAPIClient } from '@/infrastructure/sp-api/ResilientSPAPIClient';
 
 // Cache
 import { ICacheService } from '@/domain/interfaces/ICacheService';
@@ -34,6 +40,8 @@ export const TOKENS = {
   ExternalPricingService: Symbol.for('ExternalPricingService'),
   CacheService: Symbol.for('CacheService'),
   StreamingService: Symbol.for('StreamingService'),
+  SPAPIQuotaManager: Symbol.for('SPAPIQuotaManager'),
+  ResilientSPAPIClient: Symbol.for('ResilientSPAPIClient'),
 } as const;
 
 export function initializeContainer(supabaseClient: SupabaseClient): void {
@@ -70,7 +78,7 @@ export function initializeContainer(supabaseClient: SupabaseClient): void {
 
   // Register External Services
   container.register<IExternalPricingService>(TOKENS.ExternalPricingService, {
-    useClass: AmazonSPAPIAdapter,
+    useFactory: (c) => new ResilientPricingAdapter(c.resolve(TOKENS.ResilientSPAPIClient)),
   });
 
   // Register Domain Services
@@ -85,6 +93,15 @@ export function initializeContainer(supabaseClient: SupabaseClient): void {
   // Register Infrastructure Services
   container.register<StreamingService>(TOKENS.StreamingService, {
     useClass: StreamingService,
+  });
+
+  // Register SP-API Infrastructure
+  container.register<SPAPIQuotaManager>(TOKENS.SPAPIQuotaManager, {
+    useClass: SPAPIQuotaManager,
+  });
+
+  container.register<ResilientSPAPIClient>(TOKENS.ResilientSPAPIClient, {
+    useClass: ResilientSPAPIClient,
   });
 }
 
