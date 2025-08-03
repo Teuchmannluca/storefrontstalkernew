@@ -415,22 +415,20 @@ export async function POST(request: NextRequest) {
                 
                 // Look for buy box price first (CompetitivePriceId '1' is usually buy box) - NEW only
                 let buyBoxPrice = newConditionPrices.find(
-                  (cp: any) => cp.CompetitivePriceId === '1'
+                  (cp: any) => cp.competitivePriceId === '1'
                 );
                 
                 // If no buy box with '1', look for other competitive prices - NEW only
                 let featuredPrice = newConditionPrices.find(
-                  (cp: any) => cp.CompetitivePriceId === 'B2C' || cp.CompetitivePriceId === '2'
+                  (cp: any) => cp.competitivePriceId === 'B2C' || cp.competitivePriceId === '2'
                 );
                 
                 // Use buy box price preferentially, then featured price, then first available NEW item
                 const priceData = buyBoxPrice || featuredPrice || newConditionPrices[0];
                 
-                if (priceData && priceData.Price) {
-                  // Check both ListingPrice and LandedPrice structures
-                  const listingPrice = priceData.Price.ListingPrice || priceData.Price.LandedPrice;
-                  const price = listingPrice?.Amount;
-                  const currency = listingPrice?.CurrencyCode;
+                if (priceData && priceData.price) {
+                  const price = priceData.price.amount;
+                  const currency = priceData.price.currencyCode;
                   
                   // Debug logging for pricing discrepancies
                   if (debug && asin === 'B01JUUHJF4') {
@@ -438,14 +436,14 @@ export async function POST(request: NextRequest) {
                       totalCompetitivePrices: competitivePrices.length,
                       newConditionPricesCount: newConditionPrices.length,
                       allPrices: competitivePrices.map((cp: any) => ({
-                        id: cp.CompetitivePriceId,
-                        price: cp.Price,
+                        id: cp.competitivePriceId,
+                        price: cp.price,
                         condition: cp.condition,
                         belongsToRequester: cp.belongsToRequester
                       })),
                       filteredNewPrices: newConditionPrices.map((cp: any) => ({
-                        id: cp.CompetitivePriceId,
-                        price: cp.Price,
+                        id: cp.competitivePriceId,
+                        price: cp.price,
                         condition: cp.condition
                       })),
                       selectedPrice: priceData,
@@ -459,7 +457,7 @@ export async function POST(request: NextRequest) {
                       price: price,
                       currency: currency,
                       priceType: buyBoxPrice ? 'buy_box' : (featuredPrice ? 'featured_offer' : 'first_available'),
-                      competitivePriceId: priceData.CompetitivePriceId,
+                      competitivePriceId: priceData.competitivePriceId,
                       numberOfOffers: product.competitivePricing?.numberOfOfferListings?.find(
                         (l: any) => l.condition === 'New'
                       )?.count || 0,

@@ -345,20 +345,19 @@ export async function POST(request: NextRequest) {
                   if (newConditionPrices.length > 0) {
                     // Look for buy box price first
                     let buyBoxPrice = newConditionPrices.find(
-                      (cp: any) => cp.CompetitivePriceId === '1'
+                      (cp: any) => cp.competitivePriceId === '1'
                     );
                     
                     // If no buy box, look for other competitive prices
                     let featuredPrice = newConditionPrices.find(
-                      (cp: any) => cp.CompetitivePriceId === 'B2C' || cp.CompetitivePriceId === '2'
+                      (cp: any) => cp.competitivePriceId === 'B2C' || cp.competitivePriceId === '2'
                     );
                     
                     const priceData = buyBoxPrice || featuredPrice || newConditionPrices[0];
                     
-                    if (priceData && priceData.Price) {
-                      const listingPrice = priceData.Price.ListingPrice || priceData.Price.LandedPrice;
-                      const price = listingPrice?.Amount;
-                      const currency = listingPrice?.CurrencyCode;
+                    if (priceData && priceData.price) {
+                      const price = priceData.price.amount;
+                      const currency = priceData.price.currencyCode;
                       
                       if (price && currency) {
                         pricingByMarketplace.UK = {
@@ -422,19 +421,18 @@ export async function POST(request: NextRequest) {
                     
                     if (newConditionPrices.length > 0) {
                       let buyBoxPrice = newConditionPrices.find(
-                        (cp: any) => cp.CompetitivePriceId === '1'
+                        (cp: any) => cp.competitivePriceId === '1'
                       );
                       
                       let featuredPrice = newConditionPrices.find(
-                        (cp: any) => cp.CompetitivePriceId === 'B2C' || cp.CompetitivePriceId === '2'
+                        (cp: any) => cp.competitivePriceId === 'B2C' || cp.competitivePriceId === '2'
                       );
                       
                       const priceData = buyBoxPrice || featuredPrice || newConditionPrices[0];
                       
-                      if (priceData && priceData.Price) {
-                        const listingPrice = priceData.Price.ListingPrice || priceData.Price.LandedPrice;
-                        const price = listingPrice?.Amount;
-                        const currency = listingPrice?.CurrencyCode;
+                      if (priceData && priceData.price) {
+                        const price = priceData.price.amount;
+                        const currency = priceData.price.currencyCode;
                         
                         if (price && currency) {
                           pricingByMarketplace[country] = {

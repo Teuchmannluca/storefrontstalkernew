@@ -296,19 +296,23 @@ export async function POST(request: NextRequest) {
         });
 
         // Initialize SP-API clients
-        const pricingClient = new SPAPICompetitivePricingClient({
-          accessKeyId: envCheck.values.amazonAccessKeyId,
-          secretAccessKey: envCheck.values.amazonSecretAccessKey,
+        const credentials = {
+          accessKeyId: envCheck.values.awsAccessKeyId,
+          secretAccessKey: envCheck.values.awsSecretAccessKey,
+          sessionToken: undefined,
+          region: envCheck.values.awsRegion || 'eu-west-1',
+        };
+        
+        const spApiConfig = {
+          clientId: envCheck.values.amazonAccessKeyId,
+          clientSecret: envCheck.values.amazonSecretAccessKey,
           refreshToken: envCheck.values.amazonRefreshToken,
-          region: envCheck.values.awsRegion
-        });
+          marketplaceId: MARKETPLACES.UK.id,
+          region: 'eu' as const,
+        };
 
-        const feesClient = new SPAPIProductFeesClient({
-          accessKeyId: envCheck.values.amazonAccessKeyId,
-          secretAccessKey: envCheck.values.amazonSecretAccessKey,
-          refreshToken: envCheck.values.amazonRefreshToken,
-          region: envCheck.values.awsRegion
-        });
+        const pricingClient = new SPAPICompetitivePricingClient(credentials, spApiConfig);
+        const feesClient = new SPAPIProductFeesClient(credentials, spApiConfig);
 
         let processedCount = 0;
         let opportunityCount = 0;
@@ -375,7 +379,7 @@ export async function POST(request: NextRequest) {
                 }
 
                 // Calculate fees for UK selling price
-                const ukPrice = ukPricing.competitivePricing.competitivePrices?.[0]?.Price?.ListingPrice?.Amount;
+                const ukPrice = ukPricing.competitivePricing.competitivePrices?.[0]?.price?.amount;
                 if (!ukPrice || ukPrice <= 0) {
                   processedCount++;
                   continue;
@@ -387,26 +391,28 @@ export async function POST(request: NextRequest) {
                 let digitalServicesFee = 0;
 
                 try {
-                  const feesEstimate = await feesClient.getMyFeesEstimate({
-                    SellerSKU: product.asin,
-                    MarketplaceId: MARKETPLACES.UK.id,
-                    PriceToEstimateFees: {
-                      ListingPrice: {
-                        CurrencyCode: 'GBP',
-                        Amount: ukPrice
+                  const feesEstimate = await feesClient.getMyFeesEstimateForASIN(
+                    product.asin,
+                    {
+                      listingPrice: {
+                        currencyCode: 'GBP',
+                        amount: ukPrice
                       }
+                    },
+                    MARKETPLACES.UK.id
+                  );
+
+                  if (feesEstimate.status === 'Success' && feesEstimate.feesEstimate) {
+                    const fees = feesEstimate.feesEstimate;
+                    const feeDetails = fees.feeDetailList || [];
+                    
+                    amazonFees = fees.totalFeesEstimate?.amount || 0;
+                    
+                    // Extract referral fee specifically
+                    const referralFeeDetail = feeDetails.find((fee: any) => fee.feeType === 'ReferralFee');
+                    if (referralFeeDetail?.finalFee?.amount) {
+                      referralFee = referralFeeDetail.finalFee.amount;
                     }
-                  });
-
-                  if (feesEstimate?.FeesEstimate?.TotalFeesEstimate?.Amount) {
-                    amazonFees = parseFloat(feesEstimate.FeesEstimate.TotalFeesEstimate.Amount);
-                  }
-
-                  // Extract referral fee specifically
-                  const fees = feesEstimate?.FeesEstimate?.FeeDetails || [];
-                  const referralFeeDetail = fees.find((fee: any) => fee.FeeType === 'ReferralFee');
-                  if (referralFeeDetail?.FinalFee?.Amount) {
-                    referralFee = parseFloat(referralFeeDetail.FinalFee.Amount);
                   }
 
                   // Calculate 2% digital services fee
@@ -427,11 +433,11 @@ export async function POST(request: NextRequest) {
                   if (countryCode === 'UK') continue;
 
                   const countryPricing = asinPrices[countryCode];
-                  if (!countryPricing?.competitivePricing?.competitivePrices?.[0]?.Price?.ListingPrice?.Amount) {
+                  if (!countryPricing?.competitivePricing?.competitivePrices?.[0]?.price?.amount) {
                     continue;
                   }
 
-                  const sourcePrice = countryPricing.competitivePricing.competitivePrices[0].Price.ListingPrice.Amount;
+                  const sourcePrice = countryPricing.competitivePricing.competitivePrices[0].price.amount;
                   const sourcePriceGBP = sourcePrice * EUR_TO_GBP_RATE;
                   const totalCost = sourcePriceGBP + amazonFees + digitalServicesFee;
                   const profit = ukPrice - totalCost;

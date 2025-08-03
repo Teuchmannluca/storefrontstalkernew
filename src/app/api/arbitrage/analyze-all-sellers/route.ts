@@ -412,17 +412,17 @@ export async function POST(request: NextRequest) {
                 }
                 
                 let priceData = product.competitivePricing?.competitivePrices?.find(
-                  (cp: any) => cp.CompetitivePriceId === '1'
+                  (cp: any) => cp.competitivePriceId === '1'
                 );
                 
                 if (!priceData && product.competitivePricing?.competitivePrices?.length > 0) {
                   priceData = product.competitivePricing.competitivePrices[0];
                 }
                 
-                if (priceData && priceData.Price) {
+                if (priceData && priceData.price) {
                   pricingByAsin.get(asin)[country] = {
-                    price: priceData.Price.ListingPrice?.Amount || priceData.Price.LandedPrice?.Amount,
-                    currency: priceData.Price.ListingPrice?.CurrencyCode,
+                    price: priceData.price.amount,
+                    currency: priceData.price.currencyCode,
                     numberOfOffers: product.competitivePricing?.numberOfOfferListings?.find(
                       (l: any) => l.condition === 'New'
                     )?.count || 0,

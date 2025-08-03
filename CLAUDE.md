@@ -14,6 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 8. After completion, update TodoWrite with a summary of changes made 
 9. Use the Superbase MCP server
 10 , Always make sure we have the update doc and use the Context7 MCP pulls up-to-date
+11 make su
 
 # Amazon Storefront Tracker
 
