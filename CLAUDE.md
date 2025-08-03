@@ -84,7 +84,7 @@ node test-live-api.js          # Test live API connections
 ### Scheduled Operations Architecture
 - **Cron Jobs**: Two main scheduled operations via Vercel cron
   - Storefront updates: Daily at 2:00 AM UTC (`/api/cron/check-schedules`)
-  - Arbitrage scans: Hourly at 15 minutes past (`/api/cron/check-arbitrage-schedules`)
+  - Arbitrage scans: Daily at 3:15 AM UTC (`/api/cron/check-arbitrage-schedules`)
 - **User Schedule Tables**: 
   - `user_schedule_settings` for storefront sync scheduling
   - `user_arbitrage_schedule_settings` for A2A EU scan scheduling
