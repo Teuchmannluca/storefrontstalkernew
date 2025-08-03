@@ -3,15 +3,17 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 
-7 Claude rules
-1. First think through the problem, read the codebase for relevant files, and write a plan to tasks/todo.md.
-2. The plan should have a list of todo items that you can check off as you complete them
-3. Before you begin working, check in with me and I will verify the plan.
-4. Then, begin working on the todo items, marking them as complete as you go.
-5. Please every step of the way just give me a high level explanation of what changes you made
-6. Make every task and code change you do as simple as possible. We want to avoid making any massive or complex changes. Every change should impact as little code as possible. Everything is about simplicity.
-7. Finally, add a review section to the [todo.md](http://todo.md/) file with a summary of the changes you made and any other relevant information.
-
+## Development Workflow Rules
+1. First analyse the problem, read relevant codebase files, and create a plan using TodoWrite tool
+2. The plan should have specific, actionable todo items with priorities (high/medium/low)
+3. Before implementing, present the plan using ExitPlanMode tool for approval
+4. Work on todo items one at a time, marking them as complete as you progress
+5. Keep changes simple and focused - avoid massive or complex modifications
+6. Provide high-level explanations of changes made
+7. **Critical**: For any Supabase database changes, always use the MCP Supabase server tools rather than writing raw SQL files
+8. After completion, update TodoWrite with a summary of changes made 
+9. Use the Superbase MCP server
+10 , Always make sure we have the update doc and use the Context7 MCP pulls up-to-date
 
 # Amazon Storefront Tracker
 
@@ -27,8 +29,18 @@ npm run lint             # ESLint with Next.js rules
 npm run test             # Playwright E2E tests (cross-browser)
 npm run test:ui          # Playwright tests with UI mode
 npm run test:headed      # Playwright tests in headed browser
-npm run test:sp-api      # Test Amazon SP-API connection
+npm run test:sp-api      # Test Amazon SP-API connection (basic)
+npm run test:sp-api-v2   # Test SP-API connection (v2)
+npm run test:sp-api-endpoints  # Test specific SP-API endpoints
 npm run sync:catalog     # Sync product catalog from Amazon
+```
+
+## Test Scripts (Node.js)
+```bash
+node test-fees-api.sh           # Test fees calculation API
+node test-specific-asin.js      # Test single ASIN processing
+node test-fees-comprehensive.js # Comprehensive fees testing
+node test-live-api.js          # Test live API connections
 ```
 
 ## Key Architecture Decisions
@@ -40,9 +52,18 @@ npm run sync:catalog     # Sync product catalog from Amazon
 - **Playwright** for cross-browser E2E testing
 
 ### API Architecture
-- All API routes in `/src/app/api/` use Next.js 14+ route handlers
+- All API routes in `/src/app/api/` use Next.js 15 route handlers (App Router)
 - Authentication via Supabase JWT in Authorization header
 - Service role key for server-side database operations only
+- MCP (Model Context Protocol) integration for Supabase operations
+- Domain-driven design with dependency injection (`DIContainer.ts`)
+
+### Architecture Layers
+- **Domain Layer**: Business logic in `/src/domain/` (aggregates, interfaces, services, value objects)
+- **Infrastructure Layer**: External integrations in `/src/infrastructure/` (APIs, cache, database, rate limiting)
+- **Application Layer**: API routes and services coordinate between layers
+- **Presentation Layer**: React components and pages in `/src/app/` and `/src/components/`
+- **Repository Pattern**: Data access abstraction in `/src/repositories/`
 
 ### Rate Limiting Strategy
 - **Amazon SP-API Rate Limits**: 
@@ -78,10 +99,33 @@ npm run sync:catalog     # Sync product catalog from Amazon
 
 ### Arbitrage Analysis Flow
 1. **Data Collection**: Fetch pricing from all EU marketplaces concurrently
-2. **Fee Calculation**: UK Amazon fees (15% + £3) + 2% digital services fee
-3. **Currency Conversion**: EUR to GBP at 0.86 rate (from exchange-rates.ts)
-4. **Opportunity Detection**: Profit > 0 and positive ROI calculation
-5. **Scan Persistence**: All scans saved to arbitrage_scans and arbitrage_opportunities tables
+2. **Blacklist Filtering**: Exclude user-blacklisted ASINs before analysis
+3. **Sales Data Integration**: Use actual sales_per_month from products table or calculate from sales rank
+4. **Fee Calculation**: UK Amazon fees (15% + £3) + 2% digital services fee
+5. **Currency Conversion**: EUR to GBP at 0.86 rate (from exchange-rates.ts)
+6. **Opportunity Detection**: All deals categorized (profitable/break-even/loss)
+7. **Scan Persistence**: All deals saved to arbitrage_scans and arbitrage_opportunities tables with profit_category
+
+### ASIN Blacklist Feature
+- **Purpose**: Allow users to exclude specific ASINs from arbitrage analysis
+- **Use Cases**: Low-profit products, problematic suppliers, restricted items
+- **Implementation**: Check blacklist before processing each product batch
+- **UI**: Dedicated blacklist management page with add/remove functionality
+- **Scope**: Both single seller and all seller scans respect blacklist
+- **Performance**: Efficient Set-based filtering with minimal impact on scan speed
+
+### Break-Even Deals Feature
+- **Purpose**: Show deals that are neither profitable nor loss-making (around £0 profit)
+- **Categories**: 
+  - **Profitable**: profit > £0.50 (green indicators)
+  - **Break-Even**: profit between -£0.50 and £0.50 (amber indicators)
+  - **Loss**: profit < -£0.50 (red indicators)
+- **UI Controls**: Multi-state filter in A2A EU and Recent Scans pages
+  - "Profitable Only" (default)
+  - "Include Break-Even" 
+  - "Show All Deals"
+- **Implementation**: All deals saved to database with `profit_category` classification
+- **Use Cases**: Identify products close to profitability, price optimization opportunities
 
 ### British English Localization
 - analyse (not analyze)
@@ -94,15 +138,24 @@ npm run sync:catalog     # Sync product catalog from Amazon
 
 ### Core Tables
 - `storefronts`: Amazon seller storefronts with seller_id (unique constraint)
-- `products`: ASINs with pricing, availability, last sync timestamp
-- `arbitrage_scans`: Scan history with status tracking
-- `arbitrage_opportunities`: Profitable opportunities found during scans
+- `products`: ASINs with pricing, availability, sales_per_month, current_sales_rank, last sync timestamp
+- `arbitrage_scans`: Scan history with status tracking and metadata
+- `arbitrage_opportunities`: All deals with profit_category classification (profitable/break-even/loss)
+- `asin_blacklist`: User-specific blacklisted ASINs excluded from scans
+
+### Sales Data Integration
+- **products.sales_per_month**: Calculated from sales rank using estimateMonthlySalesFromRank()
+- **products.current_sales_rank**: Amazon BSR (Best Sellers Rank) from SP-API
+- **Fallback Logic**: Use database values first, calculate from rank if null, estimate from SP-API as last resort
+- **UI Display**: Show actual sales_per_month when available, estimated values with ~ prefix, "No data" only when neither available
 
 ### Migration Order (if needed)
 1. `create_storefronts_table.sql`
 2. `create_products_table.sql`
 3. `migrate_arbitrage_tables.sql` (upgrades old structure)
 4. `add_unique_constraint_seller_id.sql`
+5. `create_asin_blacklist_table.sql` (ASIN blacklist functionality)
+6. `add_profit_category_column.sql` (Break-even deals classification)
 
 ## Common Issues & Solutions
 
@@ -157,16 +210,50 @@ All stored in `.env.local`:
 ## API Route Organization
 ```
 /api/
-├── arbitrage/         # Arbitrage analysis endpoints
-├── catalog/           # Amazon catalog item lookups
-├── fees/              # Amazon fee calculations
-├── pricing/           # Competitive pricing data
-├── storefronts/       # Storefront management
-└── sync-storefront-*  # Various sync endpoints
+├── arbitrage/
+│   ├── analyze-stream/      # Single seller streaming analysis
+│   ├── analyze-all-sellers/ # All sellers streaming analysis
+│   ├── analyze-asins/       # Batch ASIN analysis
+│   └── scans/[scanId]/      # Retrieve scan results
+├── blacklist/               # ASIN blacklist management (GET, POST, DELETE)
+├── catalog/
+│   ├── item/[asin]/         # Individual ASIN lookup
+│   ├── search/              # Catalog search
+│   └── sync-products/       # Bulk product sync
+├── fees/
+│   └── comprehensive/       # Comprehensive fee calculation
+├── pricing/
+│   ├── competitive/         # Competitive pricing data
+│   ├── offers/             # Product offers
+│   └── offers-batch/       # Batch offers lookup
+├── storefronts/
+│   └── update-all/         # Update all storefronts
+├── sync-storefront-keepa/   # Keepa API integration
+├── sync-storefront-products/ # SP-API product sync with sales data
+└── v2/                     # API versioning for new features
 ```
+
+## MCP (Model Context Protocol) Integration
+- **Supabase Operations**: Always use `mcp__supabase__*` tools for database operations
+- **Available Tools**: `execute_sql`, `list_tables`, `apply_migration`, `get_logs`, `get_advisors`
+- **Project ID**: Use `wushjxsdmnapsigcwwct` for Strefrontstalker project
+- **Security**: MCP tools handle authentication and permissions automatically
 
 ## Performance Considerations
 - Batch API requests where possible (20 ASINs per batch)
-- Use streaming for long-running operations
+- Use streaming for long-running operations (Server-Sent Events)
 - Implement client-side caching for frequently accessed data
 - Database indexes on asin, seller_id, and timestamp fields
+- Token bucket rate limiting with burst capacity for SP-API
+- Concurrent marketplace pricing requests with staggered delays
+- Efficient Set-based blacklist filtering
+- Sales data calculated once during sync, cached in database
+
+## Key Utilities and Libraries
+- **Rate Limiting**: `sp-api-rate-limiter.ts` (token bucket implementation)
+- **Sales Estimation**: `sales-estimator.ts` (BSR to monthly sales conversion)
+- **Profit Categorization**: `profit-categorizer.ts` (profitable/break-even/loss classification)
+- **Blacklist Service**: `blacklist-service.ts` (efficient ASIN filtering)
+- **Authentication**: `auth.ts` and `validateApiRequest()` for JWT validation
+- **Error Handling**: `error-handling.ts` with streaming-safe error management
+- **Exchange Rates**: `exchange-rates.ts` (EUR to GBP conversion)

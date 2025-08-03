@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import SPAPIClient from '@/lib/sp-api';
+import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator';
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -74,12 +75,14 @@ export async function POST(request: NextRequest) {
           const productDetails = await spApi.getProductByASIN(product.asin);
           
           // Prepare update data
+          const salesRank = productDetails.salesRanks[0]?.rank || null;
           const updateData = {
             product_name: productDetails.title || product.product_name,
             brand: productDetails.brand || product.brand,
             image_link: productDetails.mainImage || product.image_link,
-            current_sales_rank: productDetails.salesRanks[0]?.rank || null,
+            current_sales_rank: salesRank,
             sales_rank_category: productDetails.salesRanks[0]?.category || null,
+            sales_per_month: salesRank ? estimateMonthlySalesFromRank(salesRank) : null,
             last_checked: new Date().toISOString()
           };
 

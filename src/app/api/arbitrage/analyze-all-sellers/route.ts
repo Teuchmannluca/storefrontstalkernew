@@ -4,6 +4,9 @@ import { createClient } from '@supabase/supabase-js';
 import { checkEnvVars } from '@/lib/env-check';
 import { SPAPICompetitivePricingClient } from '@/lib/sp-api-competitive-pricing';
 import { SPAPIProductFeesClient } from '@/lib/sp-api-product-fees';
+import { BlacklistService } from '@/lib/blacklist-service';
+import { categorizeProfitLevel, type ProfitCategory } from '@/lib/profit-categorizer';
+import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator';
 
 // Marketplace IDs
 const MARKETPLACES = {
@@ -38,6 +41,8 @@ interface UniqueProduct {
   asin: string;
   product_name: string;
   image_link: string;
+  current_sales_rank: number | null;
+  sales_per_month: number | null;
   storefronts: Array<{
     id: string;
     name: string;
@@ -170,6 +175,8 @@ export async function POST(request: NextRequest) {
               asin: product.asin,
               product_name: product.product_name || product.asin,
               image_link: product.image_link || '',
+              current_sales_rank: product.current_sales_rank,
+              sales_per_month: product.sales_per_month,
               storefronts: [{
                 id: storefront.id,
                 name: storefront.name,
@@ -184,7 +191,66 @@ export async function POST(request: NextRequest) {
         sendMessage({ 
           type: 'progress', 
           data: { 
-            step: `Analyzing ${uniqueProducts.length} unique ASINs (from ${allProducts.length} total products across ${storefronts.length} storefronts)...`, 
+            step: `Found ${uniqueProducts.length} unique ASINs. Checking blacklist...`, 
+            progress: 13 
+          } 
+        });
+
+        // Filter out blacklisted ASINs
+        const blacklistService = new BlacklistService(
+          envCheck.values.supabaseUrl,
+          envCheck.values.supabaseServiceKey
+        );
+        
+        const blacklistedAsins = await blacklistService.getBlacklistedAsins(user.id);
+        const { filteredProducts, excludedCount } = blacklistService.filterBlacklistedProducts(
+          uniqueProducts,
+          blacklistedAsins
+        );
+
+        if (excludedCount > 0) {
+          sendMessage({ 
+            type: 'progress', 
+            data: { 
+              step: `Excluded ${excludedCount} blacklisted ASINs. Proceeding with ${filteredProducts.length} unique ASINs...`, 
+              progress: 14,
+              excludedCount,
+              blacklistedCount: blacklistedAsins.size
+            } 
+          });
+        }
+
+        // Use filtered products for the rest of the analysis
+        const finalUniqueProducts = filteredProducts;
+        
+        if (finalUniqueProducts.length === 0) {
+          sendMessage({ type: 'error', data: { error: 'All ASINs are blacklisted. Please remove some ASINs from blacklist or add more storefronts.' } });
+          
+          // Update scan status to failed
+          if (scanId) {
+            await supabase
+              .from('arbitrage_scans')
+              .update({
+                status: 'failed',
+                error_message: 'All ASINs blacklisted',
+                completed_at: new Date().toISOString(),
+                metadata: {
+                  ...scan.metadata,
+                  excluded_asins: excludedCount,
+                  blacklisted_asins_count: blacklistedAsins.size,
+                  original_unique_asins: uniqueProducts.length
+                }
+              })
+              .eq('id', scanId);
+          }
+          
+          return;
+        }
+        
+        sendMessage({ 
+          type: 'progress', 
+          data: { 
+            step: `Analyzing ${finalUniqueProducts.length} unique ASINs (from ${allProducts.length} total products across ${storefronts.length} storefronts)...`, 
             progress: 15 
           } 
         });
@@ -209,7 +275,7 @@ export async function POST(request: NextRequest) {
         const feesClient = new SPAPIProductFeesClient(credentials, spApiConfig);
 
         // Process products in batches (EXACT SAME AS SINGLE SELLER)
-        const batchSize = Math.min(20, uniqueProducts.length > 100 ? 10 : 15);
+        const batchSize = Math.min(20, finalUniqueProducts.length > 100 ? 10 : 15);
         
         // Rate limiter helper (EXACT SAME AS SINGLE SELLER)
         let lastPricingRequest = Date.now();
@@ -219,15 +285,15 @@ export async function POST(request: NextRequest) {
         let processedCount = 0;
         let opportunitiesFound = 0;
 
-        for (let i = 0; i < uniqueProducts.length; i += batchSize) {
-          const batch = uniqueProducts.slice(i, i + batchSize);
+        for (let i = 0; i < finalUniqueProducts.length; i += batchSize) {
+          const batch = finalUniqueProducts.slice(i, i + batchSize);
           const asins = batch.map(p => p.asin);
           
           sendMessage({ 
             type: 'progress', 
             data: { 
-              step: `Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(uniqueProducts.length/batchSize)}...`, 
-              progress: 20 + (i / uniqueProducts.length) * 60 
+              step: `Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(finalUniqueProducts.length/batchSize)}...`, 
+              progress: 20 + (i / finalUniqueProducts.length) * 60 
             } 
           });
 
@@ -314,7 +380,7 @@ export async function POST(request: NextRequest) {
             // Process each ASIN in this batch (EXACT SAME AS SINGLE SELLER)
             const pricingEntries = Array.from(pricingByAsin.entries());
             for (const [asin, marketplacePrices] of pricingEntries) {
-              const product = uniqueProducts.find(p => p.asin === asin);
+              const product = finalUniqueProducts.find(p => p.asin === asin);
               
               if (!product || !marketplacePrices.UK) {
                 processedCount++;
@@ -323,8 +389,10 @@ export async function POST(request: NextRequest) {
 
               const ukPrice = marketplacePrices.UK.price;
               const ukCompetitors = marketplacePrices.UK.numberOfOffers;
-              const ukSalesRank = marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
-              const salesPerMonth = 0; // Sales per month data not available
+              // Use sales rank from database first, fallback to SP-API data
+              const ukSalesRank = product.current_sales_rank || marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
+              // Calculate sales per month if not available in database
+              const salesPerMonth = product.sales_per_month || (ukSalesRank > 0 ? estimateMonthlySalesFromRank(ukSalesRank) : 0);
 
               try {
                 // Ensure minimum interval between fees requests (EXACT SAME AS SINGLE SELLER)
@@ -430,14 +498,19 @@ export async function POST(request: NextRequest) {
 
                     euPrices.push(marketplacePrice);
 
-                    if (profit > 0 && (!bestOpportunity || roi > bestOpportunity.roi)) {
+                    if (!bestOpportunity || roi > bestOpportunity.roi) {
                       bestOpportunity = marketplacePrice;
                     }
                   }
 
-                  // If profitable, save and send opportunity
-                  if (bestOpportunity && bestOpportunity.profit > 0) {
-                    opportunitiesFound++;
+                  // Save ALL deals (profitable, break-even, and loss-making)
+                  if (bestOpportunity) {
+                    const profitCategory = categorizeProfitLevel(bestOpportunity.profit);
+                    
+                    // Only count as "opportunity" if profitable (for backward compatibility)
+                    if (bestOpportunity.profit > 0) {
+                      opportunitiesFound++;
+                    }
                     
                     // Save opportunity to database
                     if (scanId) {
@@ -460,6 +533,7 @@ export async function POST(request: NextRequest) {
                           best_source_price_gbp: bestOpportunity.sourcePriceGBP,
                           best_profit: bestOpportunity.profit,
                           best_roi: bestOpportunity.roi,
+                          profit_category: profitCategory,
                           all_marketplace_prices: { euPrices },
                           storefronts: product.storefronts
                         });
@@ -478,6 +552,7 @@ export async function POST(request: NextRequest) {
                       salesPerMonth,
                       euPrices: euPrices.sort((a, b) => b.roi - a.roi),
                       bestOpportunity,
+                      profitCategory,
                       storefronts: product.storefronts
                     };
 
@@ -501,12 +576,12 @@ export async function POST(request: NextRequest) {
               processedCount++;
               
               // Update progress every 5 products
-              if (processedCount % 5 === 0 || processedCount === uniqueProducts.length) {
-                const progress = 20 + (processedCount / uniqueProducts.length) * 70;
+              if (processedCount % 5 === 0 || processedCount === finalUniqueProducts.length) {
+                const progress = 20 + (processedCount / finalUniqueProducts.length) * 70;
                 sendMessage({ 
                   type: 'progress', 
                   data: { 
-                    step: `Analyzed ${processedCount}/${uniqueProducts.length} unique ASINs, found ${opportunitiesFound} opportunities`, 
+                    step: `Analyzed ${processedCount}/${finalUniqueProducts.length} unique ASINs, found ${opportunitiesFound} opportunities`, 
                     progress 
                   } 
                 });
@@ -525,21 +600,32 @@ export async function POST(request: NextRequest) {
             .update({
               status: 'completed',
               total_products: allProducts.length,
-              unique_asins: uniqueProducts.length,
+              unique_asins: finalUniqueProducts.length,
               opportunities_found: opportunitiesFound,
-              completed_at: new Date().toISOString()
+              completed_at: new Date().toISOString(),
+              metadata: {
+                ...scan.metadata,
+                excluded_asins: excludedCount,
+                blacklisted_asins_count: blacklistedAsins.size,
+                original_unique_asins: uniqueProducts.length
+              }
             })
             .eq('id', scanId);
         }
+
+        const completionMessage = excludedCount > 0
+          ? `Analysis complete! Analyzed ${finalUniqueProducts.length} unique ASINs (${excludedCount} blacklisted ASINs excluded) from ${allProducts.length} total products across ${storefronts.length} storefronts. Found ${opportunitiesFound} profitable opportunities.`
+          : `Analysis complete! Analyzed ${finalUniqueProducts.length} unique ASINs from ${allProducts.length} total products across ${storefronts.length} storefronts. Found ${opportunitiesFound} profitable opportunities.`;
 
         sendMessage({ 
           type: 'complete', 
           data: { 
             totalProducts: allProducts.length,
-            uniqueAsins: uniqueProducts.length,
+            uniqueAsins: finalUniqueProducts.length,
+            excludedCount,
             storefrontsAnalyzed: storefronts.length,
             opportunitiesFound,
-            message: `Analysis complete! Analyzed ${uniqueProducts.length} unique ASINs from ${allProducts.length} total products across ${storefronts.length} storefronts. Found ${opportunitiesFound} profitable opportunities.`,
+            message: completionMessage,
             scanId
           } 
         });

@@ -6,6 +6,9 @@ import { checkEnvVars } from '@/lib/env-check';
 import { validateApiRequest, AuthError } from '@/lib/auth';
 import { validateRequestBody, apiSchemas, ValidationError } from '@/lib/validation';
 import { sendStreamError, AppError, ErrorCategory, MonitoredError } from '@/lib/error-handling';
+import { BlacklistService } from '@/lib/blacklist-service';
+import { categorizeProfitLevel, type ProfitCategory } from '@/lib/profit-categorizer';
+import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator';
 
 // Marketplace IDs
 const MARKETPLACES = {
@@ -192,14 +195,69 @@ export async function POST(request: NextRequest) {
           
           return;
         }
+
+        sendMessage({ 
+          type: 'progress', 
+          data: { step: 'Checking blacklist...', progress: 8 } 
+        });
+
+        // Filter out blacklisted ASINs
+        const blacklistService = new BlacklistService(
+          envCheck.values.supabaseUrl,
+          envCheck.values.supabaseServiceKey
+        );
         
-        // Warning for very large storefronts
-        if (products.length > 500) {
+        const blacklistedAsins = await blacklistService.getBlacklistedAsins(user.id);
+        const { filteredProducts, excludedCount } = blacklistService.filterBlacklistedProducts(
+          products,
+          blacklistedAsins
+        );
+
+        if (excludedCount > 0) {
           sendMessage({ 
             type: 'progress', 
             data: { 
-              step: `⚠️ Large storefront detected (${products.length} products). This analysis may take several minutes...`, 
-              progress: 8 
+              step: `Excluded ${excludedCount} blacklisted ASINs. Proceeding with ${filteredProducts.length} products...`, 
+              progress: 9,
+              excludedCount,
+              blacklistedCount: blacklistedAsins.size
+            } 
+          });
+        }
+
+        // Use filtered products for the rest of the analysis
+        const finalProducts = filteredProducts;
+        
+        if (finalProducts.length === 0) {
+          sendMessage({ type: 'error', data: { error: 'All products are blacklisted. Please remove some ASINs from blacklist or sync more products.' } });
+          
+          // Update scan status to failed
+          if (scanId) {
+            await supabase
+              .from('arbitrage_scans')
+              .update({
+                status: 'failed',
+                error_message: 'All products blacklisted',
+                completed_at: new Date().toISOString(),
+                metadata: {
+                  ...scan.metadata,
+                  excluded_asins: excludedCount,
+                  blacklisted_asins_count: blacklistedAsins.size
+                }
+              })
+              .eq('id', scanId);
+          }
+          
+          return;
+        }
+        
+        // Warning for very large storefronts
+        if (finalProducts.length > 500) {
+          sendMessage({ 
+            type: 'progress', 
+            data: { 
+              step: `⚠️ Large storefront detected (${finalProducts.length} products). This analysis may take several minutes...`, 
+              progress: 9 
             } 
           });
         }
@@ -209,17 +267,18 @@ export async function POST(request: NextRequest) {
         // Pricing: 2 seconds between marketplace requests (to avoid bursts)
         // Fees: 1 request per second
         const estimatedSecondsPerProduct = 3; // Conservative estimate accounting for API delays
-        const totalEstimatedSeconds = Math.ceil(products.length * estimatedSecondsPerProduct);
+        const totalEstimatedSeconds = Math.ceil(finalProducts.length * estimatedSecondsPerProduct);
         const estimatedMinutes = Math.ceil(totalEstimatedSeconds / 60);
         
         sendMessage({ 
           type: 'progress', 
           data: { 
-            step: `Loaded ${products.length} products, starting EU pricing analysis...`, 
+            step: `Loaded ${finalProducts.length} products, starting EU pricing analysis...`, 
             progress: 10,
-            totalProducts: products.length,
+            totalProducts: finalProducts.length,
             estimatedTimeMinutes: estimatedMinutes,
-            startTime: Date.now()
+            startTime: Date.now(),
+            excludedCount: excludedCount
           } 
         });
 
@@ -244,7 +303,7 @@ export async function POST(request: NextRequest) {
 
         // Process products in batches respecting SP-API limits
         // Competitive Pricing API allows 20 items per request
-        const batchSize = Math.min(20, products.length > 100 ? 10 : 15);
+        const batchSize = Math.min(20, finalProducts.length > 100 ? 10 : 15);
         
         // Rate limiter helper
         let lastPricingRequest = Date.now();
@@ -254,27 +313,27 @@ export async function POST(request: NextRequest) {
         let processedCount = 0;
         let opportunitiesFound = 0;
 
-        for (let i = 0; i < products.length; i += batchSize) {
+        for (let i = 0; i < finalProducts.length; i += batchSize) {
           // Log if client disconnected but continue processing
           if (isControllerClosed || abortController.signal.aborted) {
             console.log('[STREAM] Client disconnected, but continuing scan for database storage');
           }
           
-          const batch = products.slice(i, i + batchSize);
+          const batch = finalProducts.slice(i, i + batchSize);
           const asins = batch.map(p => p.asin);
           
           // Calculate time remaining for batch messages
-          const remainingProductsAtBatch = products.length - i;
+          const remainingProductsAtBatch = finalProducts.length - i;
           const estimatedSecondsRemainingAtBatch = Math.ceil(remainingProductsAtBatch * estimatedSecondsPerProduct);
           const estimatedMinutesRemainingAtBatch = Math.ceil(estimatedSecondsRemainingAtBatch / 60);
           
           sendMessage({ 
             type: 'progress', 
             data: { 
-              step: `Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(products.length/batchSize)}...`, 
-              progress: 20 + (i / products.length) * 60,
+              step: `Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(finalProducts.length/batchSize)}...`, 
+              progress: 20 + (i / finalProducts.length) * 60,
               processedCount: i,
-              totalProducts: products.length,
+              totalProducts: finalProducts.length,
               estimatedMinutesRemaining: estimatedMinutesRemainingAtBatch
             } 
           });
@@ -415,7 +474,7 @@ export async function POST(request: NextRequest) {
             const pricingEntries = Array.from(pricingByAsin.entries());
             for (const [asin, marketplacePrices] of pricingEntries) {
               // Continue processing even if client disconnected - we want to save results
-              const product = products.find(p => p.asin === asin);
+              const product = finalProducts.find(p => p.asin === asin);
               
               if (!product || !marketplacePrices.UK) {
                 processedCount++;
@@ -452,7 +511,8 @@ export async function POST(request: NextRequest) {
               const ukCompetitors = marketplacePrices.UK.numberOfOffers;
               // Use sales rank from database first, fallback to SP-API data
               const ukSalesRank = product.current_sales_rank || marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
-              const salesPerMonth = product.sales_per_month || 0;
+              // Calculate sales per month if not available in database
+              const salesPerMonth = product.sales_per_month || (ukSalesRank > 0 ? estimateMonthlySalesFromRank(ukSalesRank) : 0);
 
               try {
                 // Ensure minimum interval between fees requests (1 request per second)
@@ -740,14 +800,19 @@ export async function POST(request: NextRequest) {
 
                         euPrices.push(marketplacePrice);
 
-                        if (profit > 0 && (!bestOpportunity || roi > bestOpportunity.roi)) {
+                        if (!bestOpportunity || roi > bestOpportunity.roi) {
                           bestOpportunity = marketplacePrice;
                         }
                       }
 
-                      // If profitable, save and send opportunity
-                      if (bestOpportunity && bestOpportunity.profit > 0) {
-                        opportunitiesFound++;
+                      // Save ALL deals (profitable, break-even, and loss-making)
+                      if (bestOpportunity) {
+                        const profitCategory = categorizeProfitLevel(bestOpportunity.profit);
+                        
+                        // Only count as "opportunity" if profitable (for backward compatibility)
+                        if (bestOpportunity.profit > 0) {
+                          opportunitiesFound++;
+                        }
                         
                         // Always save to database first (even if client disconnected)
                         if (scanId) {
@@ -771,6 +836,7 @@ export async function POST(request: NextRequest) {
                                 best_source_price_gbp: bestOpportunity.sourcePriceGBP,
                                 best_profit: bestOpportunity.profit,
                                 best_roi: bestOpportunity.roi,
+                                profit_category: profitCategory,
                                 all_marketplace_prices: { euPrices },
                                 storefronts: [{ 
                                   id: storefront.id, 
@@ -798,7 +864,8 @@ export async function POST(request: NextRequest) {
                           ukSalesRank,
                           salesPerMonth,
                           euPrices: euPrices.sort((a, b) => b.roi - a.roi),
-                          bestOpportunity
+                          bestOpportunity,
+                          profitCategory
                         };
 
                         // Only send message if client is still connected
@@ -819,21 +886,21 @@ export async function POST(request: NextRequest) {
               processedCount++;
               
               // Update progress every 5 products for smooth updates
-              if (processedCount % 5 === 0 || processedCount === products.length) {
-                const progress = 20 + (processedCount / products.length) * 70;
+              if (processedCount % 5 === 0 || processedCount === finalProducts.length) {
+                const progress = 20 + (processedCount / finalProducts.length) * 70;
                 
                 // Calculate time remaining
-                const remainingProducts = products.length - processedCount;
+                const remainingProducts = finalProducts.length - processedCount;
                 const estimatedSecondsRemaining = Math.ceil(remainingProducts * estimatedSecondsPerProduct);
                 const estimatedMinutesRemaining = Math.ceil(estimatedSecondsRemaining / 60);
                 
                 sendMessage({ 
                   type: 'progress', 
                   data: { 
-                    step: `Analyzed ${processedCount}/${products.length} products, found ${opportunitiesFound} opportunities`, 
+                    step: `Analyzed ${processedCount}/${finalProducts.length} products, found ${opportunitiesFound} opportunities`, 
                     progress,
                     processedCount,
-                    totalProducts: products.length,
+                    totalProducts: finalProducts.length,
                     opportunitiesFound,
                     estimatedMinutesRemaining
                   } 
@@ -860,7 +927,7 @@ export async function POST(request: NextRequest) {
             }
             
             // Extra safety margin for large datasets
-            if (products.length > 200) {
+            if (finalProducts.length > 200) {
               await new Promise(resolve => setTimeout(resolve, 2000)); // Increased to 2s for safety
             }
 
@@ -875,20 +942,31 @@ export async function POST(request: NextRequest) {
             .from('arbitrage_scans')
             .update({
               status: 'completed',
-              total_products: products.length,
-              unique_asins: products.length, // For single storefront, all are unique
+              total_products: finalProducts.length,
+              unique_asins: finalProducts.length, // For single storefront, all are unique
               opportunities_found: opportunitiesFound,
-              completed_at: new Date().toISOString()
+              completed_at: new Date().toISOString(),
+              metadata: {
+                ...scan.metadata,
+                excluded_asins: excludedCount,
+                blacklisted_asins_count: blacklistedAsins.size,
+                original_product_count: products.length
+              }
             })
             .eq('id', scanId);
         }
 
+        const completionMessage = excludedCount > 0
+          ? `Analysis complete! Analysed ${finalProducts.length} products (${excludedCount} blacklisted ASINs excluded) and found ${opportunitiesFound} profitable opportunities.`
+          : `Analysis complete! Analysed all ${finalProducts.length} products and found ${opportunitiesFound} profitable opportunities.`;
+
         sendMessage({ 
           type: 'complete', 
           data: { 
-            totalProducts: products.length,
+            totalProducts: finalProducts.length,
+            excludedCount,
             opportunitiesFound,
-            message: `Analysis complete! Analysed all ${products.length} products and found ${opportunitiesFound} profitable opportunities.`,
+            message: completionMessage,
             scanId
           } 
         });

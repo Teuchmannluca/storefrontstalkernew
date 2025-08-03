@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { User } from '@supabase/supabase-js'
 import Sidebar from '@/components/Sidebar'
 import AddStorefrontModal from '@/components/AddStorefrontModal'
+import StorefrontUpdatesWidget from '@/components/StorefrontUpdatesWidget'
 import { 
   BellIcon, 
   MagnifyingGlassIcon,
@@ -125,24 +126,26 @@ export default function Dashboard() {
             </button>
           </div>
 
-          {/* Stats */}
+          {/* Main Grid Layout */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">Quick Stats</h3>
-              <p className="text-3xl font-bold text-gray-800">Overview</p>
-              <p className="text-sm text-gray-500 mt-1">System metrics</p>
+            {/* Left Column - Stats */}
+            <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Quick Stats</h3>
+                <p className="text-3xl font-bold text-gray-800">Overview</p>
+                <p className="text-sm text-gray-500 mt-1">System metrics</p>
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Total Products</h3>
+                <p className="text-3xl font-bold text-gray-800">{productsCount}</p>
+                <p className="text-sm text-gray-500 mt-1">Across all storefronts</p>
+              </div>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">Total Products</h3>
-              <p className="text-3xl font-bold text-gray-800">{productsCount}</p>
-              <p className="text-sm text-gray-500 mt-1">Across all storefronts</p>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">Price Changes</h3>
-              <p className="text-3xl font-bold text-gray-800">0</p>
-              <p className="text-sm text-gray-500 mt-1">In the last 24 hours</p>
+            {/* Right Column - Storefront Updates Widget */}
+            <div className="lg:row-span-1">
+              <StorefrontUpdatesWidget />
             </div>
           </div>
 

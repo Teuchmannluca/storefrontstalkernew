@@ -1,0 +1,380 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { supabase } from '@/lib/supabase'
+import {
+  ClockIcon,
+  CalendarIcon,
+  GlobeAltIcon,
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+  ArrowPathIcon
+} from '@heroicons/react/24/outline'
+
+interface ScheduleSettings {
+  id?: string
+  enabled: boolean
+  frequency: 'daily' | 'every_2_days' | 'weekly'
+  time_of_day: string
+  timezone: string
+  days_of_week: number[]
+  last_run?: string
+  next_run?: string
+}
+
+interface ScheduleSettingsProps {
+  userId?: string
+}
+
+const FREQUENCY_OPTIONS = [
+  { value: 'daily', label: 'Daily', description: 'Update every day' },
+  { value: 'every_2_days', label: 'Every 2 days', description: 'Update every other day' },
+  { value: 'weekly', label: 'Weekly', description: 'Update on selected days of the week' }
+]
+
+const TIME_OPTIONS = Array.from({ length: 24 }, (_, i) => {
+  const hour = i.toString().padStart(2, '0')
+  const time12 = i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`
+  return { value: `${hour}:00`, label: `${hour}:00 (${time12})` }
+})
+
+const TIMEZONE_OPTIONS = [
+  { value: 'UTC', label: 'UTC' },
+  { value: 'Europe/London', label: 'London (GMT/BST)' },
+  { value: 'Europe/Paris', label: 'Paris (CET/CEST)' },
+  { value: 'Europe/Berlin', label: 'Berlin (CET/CEST)' },
+  { value: 'Europe/Madrid', label: 'Madrid (CET/CEST)' },
+  { value: 'Europe/Rome', label: 'Rome (CET/CEST)' },
+  { value: 'America/New_York', label: 'New York (EST/EDT)' },
+  { value: 'America/Los_Angeles', label: 'Los Angeles (PST/PDT)' },
+  { value: 'Asia/Tokyo', label: 'Tokyo (JST)' },
+  { value: 'Australia/Sydney', label: 'Sydney (AEDT/AEST)' }
+]
+
+const DAYS_OF_WEEK = [
+  { value: 1, label: 'Mon' },
+  { value: 2, label: 'Tue' },
+  { value: 3, label: 'Wed' },
+  { value: 4, label: 'Thu' },
+  { value: 5, label: 'Fri' },
+  { value: 6, label: 'Sat' },
+  { value: 7, label: 'Sun' }
+]
+
+export default function ScheduleSettings({ userId }: ScheduleSettingsProps) {
+  const [settings, setSettings] = useState<ScheduleSettings>({
+    enabled: false,
+    frequency: 'daily',
+    time_of_day: '02:00',
+    timezone: 'UTC',
+    days_of_week: [1, 2, 3, 4, 5, 6, 7]
+  })
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+
+  useEffect(() => {
+    if (userId) {
+      loadSettings()
+    }
+  }, [userId])
+
+  const loadSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('user_schedule_settings')
+        .select('*')
+        .eq('user_id', userId)
+        .single()
+
+      if (error && error.code !== 'PGRST116') { // Not "not found" error
+        throw error
+      }
+
+      if (data) {
+        setSettings({
+          id: data.id,
+          enabled: data.enabled,
+          frequency: data.frequency,
+          time_of_day: data.time_of_day,
+          timezone: data.timezone,
+          days_of_week: data.days_of_week || [1, 2, 3, 4, 5, 6, 7],
+          last_run: data.last_run,
+          next_run: data.next_run
+        })
+      }
+    } catch (error) {
+      console.error('Error loading schedule settings:', error)
+      setMessage({ type: 'error', text: 'Failed to load schedule settings' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const saveSettings = async () => {
+    if (!userId) return
+
+    setSaving(true)
+    setMessage(null)
+
+    try {
+      const settingsToSave = {
+        user_id: userId,
+        enabled: settings.enabled,
+        frequency: settings.frequency,
+        time_of_day: settings.time_of_day,
+        timezone: settings.timezone,
+        days_of_week: settings.days_of_week
+      }
+
+      let result
+      if (settings.id) {
+        // Update existing settings
+        result = await supabase
+          .from('user_schedule_settings')
+          .update(settingsToSave)
+          .eq('id', settings.id)
+          .select()
+          .single()
+      } else {
+        // Create new settings
+        result = await supabase
+          .from('user_schedule_settings')
+          .insert(settingsToSave)
+          .select()
+          .single()
+      }
+
+      if (result.error) {
+        throw result.error
+      }
+
+      if (result.data) {
+        setSettings(prev => ({
+          ...prev,
+          id: result.data.id,
+          last_run: result.data.last_run,
+          next_run: result.data.next_run
+        }))
+      }
+
+      setMessage({ type: 'success', text: 'Schedule settings saved successfully!' })
+    } catch (error) {
+      console.error('Error saving schedule settings:', error)
+      setMessage({ type: 'error', text: 'Failed to save schedule settings' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleDayOfWeek = (day: number) => {
+    setSettings(prev => ({
+      ...prev,
+      days_of_week: prev.days_of_week.includes(day)
+        ? prev.days_of_week.filter(d => d !== day)
+        : [...prev.days_of_week, day].sort((a, b) => a - b)
+    }))
+  }
+
+  const formatDateTime = (dateString: string) => {
+    if (!dateString) return 'Never'
+    const date = new Date(dateString)
+    return date.toLocaleString('en-GB', {
+      timeZone: settings.timezone,
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    })
+  }
+
+  const getNextRunDescription = () => {
+    if (!settings.enabled) return 'Disabled'
+    if (!settings.next_run) return 'Calculating...'
+    
+    const nextRun = new Date(settings.next_run)
+    const now = new Date()
+    const diffMs = nextRun.getTime() - now.getTime()
+    const diffHours = Math.round(diffMs / (1000 * 60 * 60))
+    
+    if (diffHours < 1) return 'Within the next hour'
+    if (diffHours < 24) return `In ${diffHours} hours`
+    
+    const diffDays = Math.round(diffHours / 24)
+    return `In ${diffDays} day${diffDays === 1 ? '' : 's'}`
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <ArrowPathIcon className="w-6 h-6 animate-spin text-indigo-600" />
+        <span className="ml-2 text-gray-600">Loading schedule settings...</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Enable/Disable Toggle */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-800">Automatic Updates</h3>
+          <p className="text-sm text-gray-600">Enable scheduled storefront updates</p>
+        </div>
+        <label className="relative inline-flex items-center cursor-pointer">
+          <input
+            type="checkbox"
+            className="sr-only peer"
+            checked={settings.enabled}
+            onChange={(e) => setSettings(prev => ({ ...prev, enabled: e.target.checked }))}
+          />
+          <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+        </label>
+      </div>
+
+      {settings.enabled && (
+        <>
+          {/* Frequency Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              <CalendarIcon className="w-5 h-5 inline mr-2" />
+              Update Frequency
+            </label>
+            <div className="space-y-2">
+              {FREQUENCY_OPTIONS.map((option) => (
+                <label key={option.value} className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    name="frequency"
+                    value={option.value}
+                    checked={settings.frequency === option.value}
+                    onChange={(e) => setSettings(prev => ({ ...prev, frequency: e.target.value as any }))}
+                    className="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 focus:ring-indigo-500"
+                  />
+                  <div className="ml-3">
+                    <div className="text-sm font-medium text-gray-900">{option.label}</div>
+                    <div className="text-sm text-gray-500">{option.description}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Days of Week (only for weekly) */}
+          {settings.frequency === 'weekly' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Days of Week
+              </label>
+              <div className="flex gap-2">
+                {DAYS_OF_WEEK.map((day) => (
+                  <button
+                    key={day.value}
+                    onClick={() => toggleDayOfWeek(day.value)}
+                    className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                      settings.days_of_week.includes(day.value)
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {day.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Time Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <ClockIcon className="w-5 h-5 inline mr-2" />
+              Time of Day
+            </label>
+            <select
+              value={settings.time_of_day}
+              onChange={(e) => setSettings(prev => ({ ...prev, time_of_day: e.target.value }))}
+              className="block w-full px-3 py-2 bg-white border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            >
+              {TIME_OPTIONS.map((time) => (
+                <option key={time.value} value={time.value}>
+                  {time.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Timezone Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <GlobeAltIcon className="w-5 h-5 inline mr-2" />
+              Timezone
+            </label>
+            <select
+              value={settings.timezone}
+              onChange={(e) => setSettings(prev => ({ ...prev, timezone: e.target.value }))}
+              className="block w-full px-3 py-2 bg-white border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            >
+              {TIMEZONE_OPTIONS.map((tz) => (
+                <option key={tz.value} value={tz.value}>
+                  {tz.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </>
+      )}
+
+      {/* Status Information */}
+      {settings.enabled && (
+        <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+          <h4 className="text-sm font-medium text-gray-800">Schedule Status</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="text-gray-600">Last Run:</span>
+              <div className="font-medium text-gray-900">{formatDateTime(settings.last_run || '')}</div>
+            </div>
+            <div>
+              <span className="text-gray-600">Next Run:</span>
+              <div className="font-medium text-gray-900">
+                {settings.next_run ? formatDateTime(settings.next_run) : 'Calculating...'}
+              </div>
+              <div className="text-xs text-gray-500">{getNextRunDescription()}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Message Display */}
+      {message && (
+        <div className={`flex items-center gap-2 p-3 rounded-lg ${
+          message.type === 'success' 
+            ? 'bg-green-50 text-green-800 border border-green-200' 
+            : 'bg-red-50 text-red-800 border border-red-200'
+        }`}>
+          {message.type === 'success' ? (
+            <CheckCircleIcon className="w-5 h-5" />
+          ) : (
+            <ExclamationTriangleIcon className="w-5 h-5" />
+          )}
+          <span className="text-sm">{message.text}</span>
+        </div>
+      )}
+
+      {/* Save Button */}
+      <div className="flex justify-end">
+        <button
+          onClick={saveSettings}
+          disabled={saving}
+          className="inline-flex items-center gap-2 bg-indigo-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {saving ? (
+            <>
+              <ArrowPathIcon className="w-5 h-5 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            'Save Settings'
+          )}
+        </button>
+      </div>
+    </div>
+  )
+}

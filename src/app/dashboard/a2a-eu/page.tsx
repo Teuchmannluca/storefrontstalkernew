@@ -8,6 +8,7 @@ import AddStorefrontModal from '@/components/AddStorefrontModal'
 import SavedScansPanel from '@/components/SavedScansPanel'
 import SavedScansInline from '@/components/SavedScansInline'
 import { estimateMonthlySalesFromRank, formatSalesEstimate } from '@/lib/sales-estimator'
+import { type ProfitCategory, getProfitCategoryColor, getProfitCategoryBgColor, getProfitCategoryBadgeColor, getProfitCategoryLabel, getProfitCategoryIcon } from '@/lib/profit-categorizer'
 import { 
   ExclamationTriangleIcon,
   ChevronDownIcon,
@@ -18,10 +19,12 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   ShoppingBagIcon,
-  BuildingStorefrontIcon
+  BuildingStorefrontIcon,
+  NoSymbolIcon
 } from '@heroicons/react/24/outline'
 import { Fragment } from 'react'
 import { Listbox, Transition } from '@headlessui/react'
+import { useBlacklist } from '@/hooks/useBlacklist'
 
 // Exchange rate constant
 const EUR_TO_GBP_RATE = 0.86
@@ -59,6 +62,7 @@ interface ArbitrageOpportunity {
   salesPerMonth?: number
   euPrices: EUMarketplacePrice[]
   bestOpportunity: EUMarketplacePrice
+  profitCategory?: ProfitCategory
   storefronts?: Array<{
     id: string
     name: string
@@ -88,13 +92,35 @@ function A2AEUPageContent() {
   } | null>(null)
   const [productCount, setProductCount] = useState<number>(0)
   const [syncingProducts, setSyncingProducts] = useState(false)
-  const [showProfitableOnly, setShowProfitableOnly] = useState(true)
+  const [dealFilter, setDealFilter] = useState<'profitable' | 'profitable-breakeven' | 'all'>('profitable')
   const [analyzingAllSellers, setAnalyzingAllSellers] = useState(false)
   const [viewingSavedScan, setViewingSavedScan] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<SortOption>('profit')
   const [selectedDeals, setSelectedDeals] = useState<Set<string>>(new Set())
+
+  // Blacklist functionality
+  const { blacklistAsin, isLoading: isBlacklisting, error: blacklistError, success: blacklistSuccess, clearMessages } = useBlacklist()
+  const [blacklistConfirm, setBlacklistConfirm] = useState<{ asin: string; productName: string } | null>(null)
   const router = useRouter()
   const searchParams = useSearchParams()
+
+  // Filter opportunities based on deal filter setting
+  const getFilteredOpportunities = (opportunities: ArbitrageOpportunity[]) => {
+    return opportunities.filter(opp => {
+      const profit = opp.bestOpportunity?.profit || 0;
+      
+      switch (dealFilter) {
+        case 'profitable':
+          return profit > 0.50;
+        case 'profitable-breakeven':
+          return profit >= -0.50;
+        case 'all':
+          return true;
+        default:
+          return profit > 0.50;
+      }
+    });
+  }
 
   useEffect(() => {
     checkAuth()
@@ -165,6 +191,26 @@ function A2AEUPageContent() {
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/')
+  }
+
+  const handleBlacklistClick = (asin: string, productName: string) => {
+    setBlacklistConfirm({ asin, productName })
+  }
+
+  const handleBlacklistConfirm = async () => {
+    if (!blacklistConfirm) return
+    
+    const success = await blacklistAsin(blacklistConfirm.asin, 'Blacklisted from A2A EU Deals')
+    if (success) {
+      setBlacklistConfirm(null)
+      // Optionally refresh the opportunities or remove the blacklisted item
+      setTimeout(() => clearMessages(), 3000) // Clear success message after 3 seconds
+    }
+  }
+
+  const handleBlacklistCancel = () => {
+    setBlacklistConfirm(null)
+    clearMessages()
   }
 
   
@@ -936,16 +982,89 @@ function A2AEUPageContent() {
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <button
-                      onClick={() => setShowProfitableOnly(!showProfitableOnly)}
-                      className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                        showProfitableOnly
-                          ? 'bg-green-100 text-green-700 border border-green-300'
-                          : 'bg-gray-100 text-gray-700 border border-gray-300'
-                      } hover:bg-opacity-80`}
-                    >
-                      {showProfitableOnly ? '✅ Profitable Only' : 'Show All'}
-                    </button>
+                    <Listbox value={dealFilter} onChange={setDealFilter}>
+                      <div className="relative">
+                        <Listbox.Button className="relative w-full cursor-default rounded-lg bg-white py-2 pl-3 pr-10 text-left shadow-sm border border-gray-300 focus:outline-none focus-visible:border-indigo-500 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-opacity-75 focus-visible:ring-offset-2 focus-visible:ring-offset-orange-300 sm:text-sm">
+                          <span className="block truncate">
+                            {dealFilter === 'profitable' && '✅ Profitable Only'}
+                            {dealFilter === 'profitable-breakeven' && '⚖️ Include Break-Even'}
+                            {dealFilter === 'all' && '📊 Show All Deals'}
+                          </span>
+                          <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                            <ChevronDownIcon
+                              className="h-5 w-5 text-gray-400"
+                              aria-hidden="true"
+                            />
+                          </span>
+                        </Listbox.Button>
+                        <Transition
+                          as={Fragment}
+                          leave="transition ease-in duration-100"
+                          leaveFrom="opacity-100"
+                          leaveTo="opacity-0"
+                        >
+                          <Listbox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm z-50">
+                            <Listbox.Option
+                              value="profitable"
+                              className={({ active }) =>
+                                `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                  active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                }`
+                              }
+                            >
+                              {({ selected }) => (
+                                <>
+                                  <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>
+                                    ✅ Profitable Only
+                                  </span>
+                                  <span className="block text-xs text-gray-500 mt-1">
+                                    Show only deals with profit &gt; £0.50
+                                  </span>
+                                </>
+                              )}
+                            </Listbox.Option>
+                            <Listbox.Option
+                              value="profitable-breakeven"
+                              className={({ active }) =>
+                                `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                  active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                }`
+                              }
+                            >
+                              {({ selected }) => (
+                                <>
+                                  <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>
+                                    ⚖️ Include Break-Even
+                                  </span>
+                                  <span className="block text-xs text-gray-500 mt-1">
+                                    Show profitable + break-even deals (profit ≥ -£0.50)
+                                  </span>
+                                </>
+                              )}
+                            </Listbox.Option>
+                            <Listbox.Option
+                              value="all"
+                              className={({ active }) =>
+                                `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                  active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                }`
+                              }
+                            >
+                              {({ selected }) => (
+                                <>
+                                  <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>
+                                    📊 Show All Deals
+                                  </span>
+                                  <span className="block text-xs text-gray-500 mt-1">
+                                    Include losses, break-even, and profitable deals
+                                  </span>
+                                </>
+                              )}
+                            </Listbox.Option>
+                          </Listbox.Options>
+                        </Transition>
+                      </div>
+                    </Listbox>
                     
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-600">Sort by:</span>
@@ -964,7 +1083,7 @@ function A2AEUPageContent() {
                   
                   <div className="flex items-center gap-3">
                     {/* Select All for profitable deals */}
-                    {sortedOpportunities.filter(opp => !showProfitableOnly || (opp.bestOpportunity && opp.bestOpportunity.profit > 0)).length > 0 && (
+                    {getFilteredOpportunities(sortedOpportunities).length > 0 && (
                       <button
                         onClick={() => {
                           const profitableAsins = sortedOpportunities
@@ -1039,17 +1158,21 @@ function A2AEUPageContent() {
                 </div>
               </div>
               
-              {/* Filter opportunities based on profit toggle */}
+              {/* Filter opportunities based on deal filter */}
               {(() => {
-                const filteredOpportunities = sortedOpportunities.filter(
-                  opp => !showProfitableOnly || (opp.bestOpportunity && opp.bestOpportunity.profit > 0)
-                );
+                const filteredOpportunities = getFilteredOpportunities(sortedOpportunities);
                 
-                if (filteredOpportunities.length === 0 && showProfitableOnly) {
+                if (filteredOpportunities.length === 0) {
+                  const noOpportunitiesMessage = dealFilter === 'profitable' 
+                    ? 'No profitable opportunities found yet'
+                    : dealFilter === 'profitable-breakeven'
+                    ? 'No profitable or break-even opportunities found yet'
+                    : 'No opportunities found yet';
+                    
                   return (
                     <div className="bg-yellow-50 rounded-xl p-8 text-center">
                       <p className="text-yellow-800 font-medium">
-                        No profitable opportunities found yet
+                        {noOpportunitiesMessage}
                       </p>
                       <p className="text-yellow-600 text-sm mt-1">
                         {analyzing ? 'Still analyzing products...' : 'Try analyzing more products or adjusting your criteria'}
@@ -1185,25 +1308,27 @@ function A2AEUPageContent() {
                       {/* Right: Profit Info */}
                       <div className="text-right">
                         <p className="text-sm text-gray-500 mb-1">NET PROFIT (INC-VAT)</p>
-                        <p className={`text-4xl font-bold ${opp.bestOpportunity?.profit > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <p className={`text-4xl font-bold ${getProfitCategoryColor(opp.profitCategory || 'profitable')}`}>
                           £{(opp.bestOpportunity?.profit || 0).toFixed(2)}
                         </p>
-                        {opp.bestOpportunity?.profit > 0 && (
-                          <div className="flex items-center justify-end gap-1 mt-2">
-                            <span className="text-green-600">✓</span>
-                            <span className="text-green-600 font-medium">Profitable</span>
-                          </div>
-                        )}
+                        <div className="flex items-center justify-end gap-1 mt-2">
+                          <span className={getProfitCategoryColor(opp.profitCategory || 'profitable')}>
+                            {getProfitCategoryIcon(opp.profitCategory || 'profitable')}
+                          </span>
+                          <span className={`font-medium ${getProfitCategoryColor(opp.profitCategory || 'profitable')}`}>
+                            {getProfitCategoryLabel(opp.profitCategory || 'profitable')}
+                          </span>
+                        </div>
                         <div className="flex gap-8 mt-4 text-sm">
                           <div>
                             <p className="text-gray-500">Margin</p>
-                            <p className="font-semibold text-green-600">
+                            <p className={`font-semibold ${getProfitCategoryColor(opp.profitCategory || 'profitable')}`}>
                               {((opp.bestOpportunity?.profit / opp.targetPrice) * 100).toFixed(1)}%
                             </p>
                           </div>
                           <div>
                             <p className="text-gray-500">ROI</p>
-                            <p className="font-semibold text-green-600">
+                            <p className={`font-semibold ${getProfitCategoryColor(opp.profitCategory || 'profitable')}`}>
                               {(opp.bestOpportunity?.roi || 0).toFixed(1)}%
                             </p>
                           </div>
@@ -1486,6 +1611,21 @@ function A2AEUPageContent() {
                             </svg>
                             Share
                           </button>
+
+                          {/* Blacklist Button */}
+                          <button
+                            onClick={() => handleBlacklistClick(opp.asin, opp.productName)}
+                            disabled={isBlacklisting}
+                            className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors flex items-center gap-1 disabled:opacity-50"
+                            title="Blacklist this ASIN"
+                          >
+                            {isBlacklisting ? (
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                            ) : (
+                              <NoSymbolIcon className="w-4 h-4" />
+                            )}
+                            Blacklist
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1600,6 +1740,72 @@ function A2AEUPageContent() {
           
         </div>
       </div>
+
+      {/* Blacklist Confirmation Dialog */}
+      {blacklistConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <NoSymbolIcon className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-medium text-gray-900">Blacklist ASIN</h3>
+                <p className="text-sm text-gray-500">This will exclude it from all future scans</p>
+              </div>
+            </div>
+            
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+              <p className="font-medium text-gray-900">{blacklistConfirm.productName}</p>
+              <p className="text-sm text-gray-600">ASIN: {blacklistConfirm.asin}</p>
+            </div>
+
+            {blacklistError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-700">{blacklistError}</p>
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleBlacklistCancel}
+                disabled={isBlacklisting}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBlacklistConfirm}
+                disabled={isBlacklisting}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isBlacklisting && (
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                )}
+                Blacklist ASIN
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success/Error Messages */}
+      {(blacklistSuccess || blacklistError) && !blacklistConfirm && (
+        <div className="fixed top-4 right-4 z-50">
+          <div className={`p-4 rounded-lg shadow-lg ${blacklistSuccess ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+            <div className="flex items-center gap-2">
+              {blacklistSuccess ? (
+                <CheckCircleIcon className="w-5 h-5 text-green-600" />
+              ) : (
+                <XCircleIcon className="w-5 h-5 text-red-600" />
+              )}
+              <p className={`text-sm font-medium ${blacklistSuccess ? 'text-green-700' : 'text-red-700'}`}>
+                {blacklistSuccess || blacklistError}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AddStorefrontModal
         isOpen={showAddStorefrontModal}

@@ -25,6 +25,7 @@ import { Menu, Transition } from '@headlessui/react'
 import { Fragment } from 'react'
 import SyncButton from '@/components/SyncButton'
 import { useSyncStatus } from '@/contexts/SyncStatusContext'
+import UpdateProgressBar from '@/components/UpdateProgressBar'
 
 interface Storefront {
   id: string
@@ -131,11 +132,20 @@ export default function StorefrontsPage() {
   }
 
   const handleUpdateAllStorefronts = async () => {
-    if (isUpdatingAll) return
+    console.log('🚀 Update All button clicked!')
+    if (isUpdatingAll) {
+      console.log('⚠️ Already updating, skipping')
+      return
+    }
     
+    console.log(`📊 Confirming update for ${storefronts.length} storefronts`)
     const confirmUpdate = confirm(`This will update all ${storefronts.length} storefronts. The process will take approximately ${storefronts.length * 3} minutes. Continue?`)
-    if (!confirmUpdate) return
+    if (!confirmUpdate) {
+      console.log('❌ User cancelled update')
+      return
+    }
 
+    console.log('✅ Starting update process...')
     setIsUpdatingAll(true)
     const operationId = `bulk-update-${Date.now()}`
     
@@ -154,7 +164,9 @@ export default function StorefrontsPage() {
     
     try {
       const { data: { session } } = await supabase.auth.getSession()
+      console.log('🔐 Got session:', !!session?.access_token)
       
+      console.log('📡 Making API call to /api/storefronts/update-all')
       const response = await fetch('/api/storefronts/update-all', {
         method: 'POST',
         headers: {
@@ -163,11 +175,16 @@ export default function StorefrontsPage() {
         }
       })
 
+      console.log('📡 API Response status:', response.status)
+
       if (!response.ok) {
+        const errorData = await response.json()
+        console.error('❌ API Error:', errorData)
         throw new Error('Failed to start update process')
       }
 
       const result = await response.json()
+      console.log('✅ API Success:', result)
       
       updateSyncOperation(operationId, {
         status: 'completed',
@@ -179,12 +196,13 @@ export default function StorefrontsPage() {
         fetchStorefronts()
       }, 5000)
     } catch (error) {
-      console.error('Error updating storefronts:', error)
+      console.error('❌ Error updating storefronts:', error)
       updateSyncOperation(operationId, {
         status: 'error',
         message: 'Failed to start update process'
       })
     } finally {
+      console.log('🏁 Update process finished, resetting state')
       setIsUpdatingAll(false)
     }
   }
@@ -623,6 +641,9 @@ export default function StorefrontsPage() {
         onClose={() => setShowAddModal(false)}
         onSuccess={fetchStorefronts}
       />
+
+      {/* Update Progress Bar */}
+      <UpdateProgressBar />
     </div>
   )
 }

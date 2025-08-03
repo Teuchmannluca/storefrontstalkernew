@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import Sidebar from '@/components/Sidebar'
 import AddStorefrontModal from '@/components/AddStorefrontModal'
 import { estimateMonthlySalesFromRank, formatSalesEstimate } from '@/lib/sales-estimator'
+import { type ProfitCategory, getProfitCategoryColor, getProfitCategoryBgColor, getProfitCategoryBadgeColor, getProfitCategoryLabel, getProfitCategoryIcon } from '@/lib/profit-categorizer'
 import { 
   ClockIcon,
   ArrowPathIcon,
@@ -18,8 +19,13 @@ import {
   CalendarIcon,
   ExclamationTriangleIcon,
   ArrowDownTrayIcon,
-  TrashIcon
+  TrashIcon,
+  ChevronDownIcon,
+  NoSymbolIcon
 } from '@heroicons/react/24/outline'
+import { Fragment } from 'react'
+import { Listbox, Transition } from '@headlessui/react'
+import { useBlacklist } from '@/hooks/useBlacklist'
 
 interface SavedScan {
   id: string
@@ -61,8 +67,10 @@ interface ArbitrageOpportunity {
   ukCompetitors: number
   ukLowestPrice: number
   ukSalesRank: number
+  salesPerMonth: number
   euPrices: EUMarketplacePrice[]
   bestOpportunity: EUMarketplacePrice
+  profitCategory?: ProfitCategory
   storefronts?: Array<{
     id: string
     name: string
@@ -84,6 +92,10 @@ export default function RecentScansPage() {
   const [loadingScanResults, setLoadingScanResults] = useState(false)
   const [selectedDeals, setSelectedDeals] = useState<Set<string>>(new Set())
   
+  // Blacklist functionality
+  const { blacklistAsin, isLoading: isBlacklisting, error: blacklistError, success: blacklistSuccess, clearMessages } = useBlacklist()
+  const [blacklistConfirm, setBlacklistConfirm] = useState<{ asin: string; productName: string } | null>(null)
+  
   // Sorting and filtering state
   const [sortBy, setSortBy] = useState<'profit' | 'roi' | 'profitMargin' | 'targetPrice' | 'ukSalesRank'>('profit')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
@@ -91,10 +103,10 @@ export default function RecentScansPage() {
   const [minROI, setMinROI] = useState<number>(0)
   const [maxPrice, setMaxPrice] = useState<number>(0)
   const [selectedMarketplace, setSelectedMarketplace] = useState<string>('all')
+  const [dealFilter, setDealFilter] = useState<'profitable' | 'profitable-breakeven' | 'all'>('profitable')
   
   // Delete functionality state
   const [deletingScanId, setDeletingScanId] = useState<string | null>(null)
-  const [scanToDelete, setScanToDelete] = useState<SavedScan | null>(null)
   
   const router = useRouter()
 
@@ -130,6 +142,26 @@ export default function RecentScansPage() {
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/')
+  }
+
+  const handleBlacklistClick = (asin: string, productName: string) => {
+    setBlacklistConfirm({ asin, productName })
+  }
+
+  const handleBlacklistConfirm = async () => {
+    if (!blacklistConfirm) return
+    
+    const success = await blacklistAsin(blacklistConfirm.asin, 'Blacklisted from Recent Scans')
+    if (success) {
+      setBlacklistConfirm(null)
+      // Optionally refresh the opportunities or remove the blacklisted item
+      setTimeout(() => clearMessages(), 3000) // Clear success message after 3 seconds
+    }
+  }
+
+  const handleBlacklistCancel = () => {
+    setBlacklistConfirm(null)
+    clearMessages()
   }
 
   const fetchSavedScans = async () => {
@@ -193,6 +225,7 @@ export default function RecentScansPage() {
         ukCompetitors: opp.uk_competitors || 0,
         ukLowestPrice: parseFloat(opp.target_price || '0'), // Using target price as lowest
         ukSalesRank: opp.uk_sales_rank || 0,
+        salesPerMonth: opp.sales_per_month || 0,
         euPrices: opp.all_marketplace_prices?.euPrices || [],
         bestOpportunity: {
           marketplace: opp.best_source_marketplace || 'EU',
@@ -308,7 +341,7 @@ export default function RecentScansPage() {
       
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        alert('You must be logged in to delete scans')
+        console.error('User not logged in')
         return
       }
 
@@ -334,20 +367,13 @@ export default function RecentScansPage() {
         handleBackToScans()
       }
       
-      setScanToDelete(null)
-      alert('Scan and associated opportunities deleted successfully')
-      
     } catch (error) {
       console.error('Error deleting scan:', error)
-      alert(`Failed to delete scan: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setDeletingScanId(null)
     }
   }
 
-  const confirmDeleteScan = (scan: SavedScan) => {
-    setScanToDelete(scan)
-  }
 
   const getScanTypeLabel = (type: string) => {
     switch (type) {
@@ -454,6 +480,20 @@ export default function RecentScansPage() {
   // Function to filter and sort opportunities
   const getFilteredAndSortedOpportunities = () => {
     let filtered = opportunities.filter(opp => {
+      // Filter by deal type (profitable, break-even, or all)
+      const profit = opp.bestOpportunity?.profit || 0;
+      switch (dealFilter) {
+        case 'profitable':
+          if (profit <= 0.50) return false;
+          break;
+        case 'profitable-breakeven':
+          if (profit < -0.50) return false;
+          break;
+        case 'all':
+          // Show all deals
+          break;
+      }
+      
       // Filter by minimum profit
       if (minProfit > 0 && opp.bestOpportunity.profit < minProfit) return false
       
@@ -631,7 +671,74 @@ export default function RecentScansPage() {
 
                   {/* Sorting and Filtering Controls */}
                   <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
+                      {/* Deal Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Show Deals</label>
+                        <Listbox value={dealFilter} onChange={setDealFilter}>
+                          <div className="relative">
+                            <Listbox.Button className="relative w-full cursor-default rounded-lg bg-white py-2 pl-3 pr-10 text-left shadow-sm border border-gray-300 focus:outline-none focus-visible:border-indigo-500 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-opacity-75 focus-visible:ring-offset-2 focus-visible:ring-offset-orange-300 sm:text-sm">
+                              <span className="block truncate text-sm">
+                                {dealFilter === 'profitable' && '✅ Profitable'}
+                                {dealFilter === 'profitable-breakeven' && '⚖️ + Break-Even'}
+                                {dealFilter === 'all' && '📊 All Deals'}
+                              </span>
+                              <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                                <ChevronDownIcon
+                                  className="h-5 w-5 text-gray-400"
+                                  aria-hidden="true"
+                                />
+                              </span>
+                            </Listbox.Button>
+                            <Transition
+                              as={Fragment}
+                              leave="transition ease-in duration-100"
+                              leaveFrom="opacity-100"
+                              leaveTo="opacity-0"
+                            >
+                              <Listbox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm z-50">
+                                <Listbox.Option
+                                  value="profitable"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    ✅ Profitable Only
+                                  </span>
+                                </Listbox.Option>
+                                <Listbox.Option
+                                  value="profitable-breakeven"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    ⚖️ Include Break-Even
+                                  </span>
+                                </Listbox.Option>
+                                <Listbox.Option
+                                  value="all"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    📊 Show All Deals
+                                  </span>
+                                </Listbox.Option>
+                              </Listbox.Options>
+                            </Transition>
+                          </div>
+                        </Listbox>
+                      </div>
+
                       {/* Sort By */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Sort by</label>
@@ -728,6 +835,7 @@ export default function RecentScansPage() {
                           setMinROI(0)
                           setMaxPrice(0)
                           setSelectedMarketplace('all')
+                          setDealFilter('profitable')
                           setSortBy('profit')
                           setSortOrder('desc')
                         }}
@@ -801,7 +909,12 @@ export default function RecentScansPage() {
                                       <div className="flex items-center gap-1">
                                         <span className="text-xs text-gray-600 font-medium">Sales/month:</span>
                                         <span className="text-sm font-semibold text-green-600">
-                                          ~{formatSalesEstimate(estimateMonthlySalesFromRank(opp.ukSalesRank))}
+                                          {opp.salesPerMonth > 0 
+                                            ? opp.salesPerMonth.toLocaleString()
+                                            : opp.ukSalesRank > 0 
+                                              ? `~${formatSalesEstimate(estimateMonthlySalesFromRank(opp.ukSalesRank))}`
+                                              : 'No data'
+                                          }
                                         </span>
                                       </div>
                                     </>
@@ -849,25 +962,27 @@ export default function RecentScansPage() {
                             {/* Right: Profit Info */}
                             <div className="text-right">
                               <p className="text-sm text-gray-500 mb-1">NET PROFIT (INC-VAT)</p>
-                              <p className={`text-4xl font-bold ${opp.bestOpportunity?.profit > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              <p className={`text-4xl font-bold ${getProfitCategoryColor(opp.profitCategory || 'profitable')}`}>
                                 £{(opp.bestOpportunity?.profit || 0).toFixed(2)}
                               </p>
-                              {opp.bestOpportunity?.profit > 0 && (
-                                <div className="flex items-center justify-end gap-1 mt-2">
-                                  <span className="text-green-600">✓</span>
-                                  <span className="text-green-600 font-medium">Profitable</span>
-                                </div>
-                              )}
+                              <div className="flex items-center justify-end gap-1 mt-2">
+                                <span className={getProfitCategoryColor(opp.profitCategory || 'profitable')}>
+                                  {getProfitCategoryIcon(opp.profitCategory || 'profitable')}
+                                </span>
+                                <span className={`font-medium ${getProfitCategoryColor(opp.profitCategory || 'profitable')}`}>
+                                  {getProfitCategoryLabel(opp.profitCategory || 'profitable')}
+                                </span>
+                              </div>
                               <div className="flex gap-8 mt-4 text-sm">
                                 <div>
                                   <p className="text-gray-500">Margin</p>
-                                  <p className="font-semibold text-green-600">
+                                  <p className={`font-semibold ${getProfitCategoryColor(opp.profitCategory || 'profitable')}`}>
                                     {((opp.bestOpportunity?.profit / opp.targetPrice) * 100).toFixed(1)}%
                                   </p>
                                 </div>
                                 <div>
                                   <p className="text-gray-500">ROI</p>
-                                  <p className="font-semibold text-green-600">
+                                  <p className={`font-semibold ${getProfitCategoryColor(opp.profitCategory || 'profitable')}`}>
                                     {(opp.bestOpportunity?.roi || 0).toFixed(1)}%
                                   </p>
                                 </div>
@@ -1147,6 +1262,21 @@ export default function RecentScansPage() {
                                     <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
                                   </svg>
                                   Share
+                                </button>
+
+                                {/* Blacklist Button */}
+                                <button
+                                  onClick={() => handleBlacklistClick(opp.asin, opp.productName)}
+                                  disabled={isBlacklisting}
+                                  className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors flex items-center gap-1 disabled:opacity-50"
+                                  title="Blacklist this ASIN"
+                                >
+                                  {isBlacklisting ? (
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                  ) : (
+                                    <NoSymbolIcon className="w-4 h-4" />
+                                  )}
+                                  Blacklist
                                 </button>
                               </div>
                             </div>
@@ -1517,6 +1647,72 @@ export default function RecentScansPage() {
         </div>
       </div>
 
+      {/* Blacklist Confirmation Dialog */}
+      {blacklistConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <NoSymbolIcon className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-medium text-gray-900">Blacklist ASIN</h3>
+                <p className="text-sm text-gray-500">This will exclude it from all future scans</p>
+              </div>
+            </div>
+            
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+              <p className="font-medium text-gray-900">{blacklistConfirm.productName}</p>
+              <p className="text-sm text-gray-600">ASIN: {blacklistConfirm.asin}</p>
+            </div>
+
+            {blacklistError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-700">{blacklistError}</p>
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleBlacklistCancel}
+                disabled={isBlacklisting}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBlacklistConfirm}
+                disabled={isBlacklisting}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isBlacklisting && (
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                )}
+                Blacklist ASIN
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success/Error Messages */}
+      {(blacklistSuccess || blacklistError) && !blacklistConfirm && (
+        <div className="fixed top-4 right-4 z-50">
+          <div className={`p-4 rounded-lg shadow-lg ${blacklistSuccess ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+            <div className="flex items-center gap-2">
+              {blacklistSuccess ? (
+                <CheckCircleIcon className="w-5 h-5 text-green-600" />
+              ) : (
+                <XCircleIcon className="w-5 h-5 text-red-600" />
+              )}
+              <p className={`text-sm font-medium ${blacklistSuccess ? 'text-green-700' : 'text-red-700'}`}>
+                {blacklistSuccess || blacklistError}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <AddStorefrontModal
         isOpen={showAddStorefrontModal}
         onClose={() => setShowAddStorefrontModal(false)}
@@ -1525,67 +1721,6 @@ export default function RecentScansPage() {
         }}
       />
 
-      {/* Delete Confirmation Modal */}
-      {scanToDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
-                <TrashIcon className="w-6 h-6 text-red-600" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">Delete Scan</h3>
-                <p className="text-sm text-gray-500">This action cannot be undone</p>
-              </div>
-            </div>
-            
-            <div className="mb-6">
-              <p className="text-gray-700 mb-3">
-                Are you sure you want to delete this scan and all associated opportunities?
-              </p>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-sm">
-                  <div className="font-medium text-gray-900">{scanToDelete.storefront_name || 'All Storefronts'}</div>
-                  <div className="text-gray-500">
-                    {getScanTypeLabel(scanToDelete.scan_type)} • {formatDateTime(scanToDelete.started_at)}
-                  </div>
-                  {scanToDelete.opportunities_found > 0 && (
-                    <div className="text-red-600 font-medium mt-1">
-                      {scanToDelete.opportunities_found} opportunities will be permanently deleted
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            
-            <div className="flex gap-3">
-              <button
-                onClick={() => setScanToDelete(null)}
-                className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleDeleteScan(scanToDelete.id)}
-                disabled={deletingScanId === scanToDelete.id}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-              >
-                {deletingScanId === scanToDelete.id ? (
-                  <>
-                    <ArrowPathIcon className="w-4 h-4 animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <TrashIcon className="w-4 h-4" />
-                    Delete Scan
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

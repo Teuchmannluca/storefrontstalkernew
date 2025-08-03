@@ -13,6 +13,15 @@
     },
     "src/app/api/catalog/sync-products/route.ts": {
       "maxDuration": 300
+    },
+    "src/app/api/cron/check-schedules/route.ts": {
+      "maxDuration": 300
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/check-schedules",
+      "schedule": "0 * * * *"
+    }
+  ]
 }
