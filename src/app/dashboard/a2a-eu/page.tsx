@@ -73,10 +73,14 @@ interface ArbitrageOpportunity {
 type SortOption = 'profit' | 'roi' | 'margin' | 'price'
 
 
+type SelectionMode = 'single' | 'multiple' | 'all'
+
 function A2AEUPageContent() {
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([])
   const [storefronts, setStorefronts] = useState<Storefront[]>([])
   const [selectedStorefront, setSelectedStorefront] = useState<Storefront | null>(null)
+  const [selectedStorefronts, setSelectedStorefronts] = useState<Storefront[]>([])
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>('single')
   const [showAddStorefrontModal, setShowAddStorefrontModal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
@@ -100,6 +104,7 @@ function A2AEUPageContent() {
   const [syncingProducts, setSyncingProducts] = useState(false)
   const [dealFilter, setDealFilter] = useState<'profitable' | 'profitable-breakeven' | 'all'>('profitable')
   const [analyzingAllSellers, setAnalyzingAllSellers] = useState(false)
+  const [analyzingSelectedStorefronts, setAnalyzingSelectedStorefronts] = useState(false)
   const [viewingSavedScan, setViewingSavedScan] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<SortOption>('profit')
   const [selectedDeals, setSelectedDeals] = useState<Set<string>>(new Set())
@@ -139,10 +144,14 @@ function A2AEUPageContent() {
   }, [searchParams])
   
   useEffect(() => {
-    if (selectedStorefront) {
+    if (selectionMode === 'single' && selectedStorefront) {
+      fetchProductCount()
+    } else if (selectionMode === 'multiple' && selectedStorefronts.length > 0) {
+      fetchProductCount()
+    } else if (selectionMode === 'all') {
       fetchProductCount()
     }
-  }, [selectedStorefront])
+  }, [selectedStorefront, selectedStorefronts, selectionMode])
 
 
   const checkAuth = async () => {
@@ -183,6 +192,9 @@ function A2AEUPageContent() {
         setStorefronts(data)
         if (data.length > 0) {
           setSelectedStorefront(data[0])
+          if (selectionMode === 'multiple' && selectedStorefronts.length === 0) {
+            setSelectedStorefronts([data[0]])
+          }
         }
       } else {
         console.log('No data returned from storefronts query')
@@ -217,6 +229,37 @@ function A2AEUPageContent() {
   const handleBlacklistCancel = () => {
     setBlacklistConfirm(null)
     clearMessages()
+  }
+
+  const handleStorefrontToggle = (storefront: Storefront) => {
+    setSelectedStorefronts(prev => {
+      const isSelected = prev.some(s => s.id === storefront.id)
+      if (isSelected) {
+        return prev.filter(s => s.id !== storefront.id)
+      } else {
+        return [...prev, storefront]
+      }
+    })
+  }
+
+  const handleSelectAllStorefronts = () => {
+    setSelectedStorefronts([...storefronts])
+  }
+
+  const handleClearAllStorefronts = () => {
+    setSelectedStorefronts([])
+  }
+
+  const handleSelectionModeChange = (mode: SelectionMode) => {
+    setSelectionMode(mode)
+    setViewingSavedScan(null) // Clear any viewed scan
+    
+    // Initialize selections based on mode
+    if (mode === 'single' && !selectedStorefront && storefronts.length > 0) {
+      setSelectedStorefront(storefronts[0])
+    } else if (mode === 'multiple' && selectedStorefronts.length === 0 && storefronts.length > 0) {
+      setSelectedStorefronts([storefronts[0]]) // Start with first storefront selected
+    }
   }
 
   
@@ -296,17 +339,31 @@ function A2AEUPageContent() {
   }
   
   const fetchProductCount = async () => {
-    if (!selectedStorefront) return
-    
     try {
-      const { count } = await supabase
+      let query = supabase
         .from('products')
         .select('*', { count: 'exact', head: true })
-        .eq('storefront_id', selectedStorefront.id)
       
+      if (selectionMode === 'single' && selectedStorefront) {
+        query = query.eq('storefront_id', selectedStorefront.id)
+      } else if (selectionMode === 'multiple' && selectedStorefronts.length > 0) {
+        query = query.in('storefront_id', selectedStorefronts.map(s => s.id))
+      } else if (selectionMode === 'all') {
+        // For all mode, get products from all user's storefronts
+        const storefrontIds = storefronts.map(s => s.id)
+        if (storefrontIds.length > 0) {
+          query = query.in('storefront_id', storefrontIds)
+        }
+      } else {
+        setProductCount(0)
+        return
+      }
+      
+      const { count } = await query
       setProductCount(count || 0)
     } catch (error) {
       console.error('Error fetching product count:', error)
+      setProductCount(0)
     }
   }
   
@@ -461,6 +518,128 @@ function A2AEUPageContent() {
       alert(`Failed to analyze all sellers: ${error.message}`)
     } finally {
       setAnalyzingAllSellers(false)
+    }
+  }
+
+  const analyzeSelectedStorefronts = async () => {
+    if (selectedStorefronts.length === 0) return
+    
+    setAnalyzingSelectedStorefronts(true)
+    setOpportunities([])
+    setAnalysisStats(null)
+    setViewingSavedScan(null)
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('No session found')
+      
+      const response = await fetch('/api/arbitrage/analyze-selected-storefronts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          storefrontIds: selectedStorefronts.map(s => s.id)
+        })
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to start analysis')
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('No response stream')
+
+      const decoder = new TextDecoder()
+      let opportunityCount = 0
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const chunk = decoder.decode(value)
+        const lines = chunk.split('\n')
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const message = JSON.parse(line.slice(6))
+              
+              switch (message.type) {
+                case 'progress':
+                  setAnalysisStats(prev => ({
+                    totalOpportunities: opportunityCount,
+                    productsAnalyzed: message.data.productsAnalyzed || 0,
+                    exchangeRate: EUR_TO_GBP_RATE,
+                    ...prev,
+                    progressMessage: message.data.step,
+                    progress: message.data.progress,
+                    estimatedMinutesRemaining: message.data.estimatedMinutesRemaining,
+                    processedCount: message.data.processedCount,
+                    totalProducts: message.data.totalProducts || message.data.finalAsinCount,
+                    // Statistics for selected storefronts scan
+                    storefrontsCount: message.data.storefrontsCount,
+                    uniqueAsins: message.data.uniqueAsins,
+                    excludedCount: message.data.excludedCount,
+                    blacklistedCount: message.data.blacklistedCount,
+                    finalAsinCount: message.data.finalAsinCount
+                  }))
+                  break
+                  
+                case 'opportunity':
+                  opportunityCount++
+                  setOpportunities(prev => {
+                    const newOpportunities = [...prev, message.data]
+                    // Sort by best ROI
+                    return newOpportunities.sort((a, b) => b.bestOpportunity.roi - a.bestOpportunity.roi)
+                  })
+                  setAnalysisStats(prev => ({
+                    totalOpportunities: opportunityCount,
+                    productsAnalyzed: prev?.productsAnalyzed || 0,
+                    exchangeRate: EUR_TO_GBP_RATE,
+                    progressMessage: prev?.progressMessage,
+                    progress: prev?.progress
+                  }))
+                  break
+                  
+                case 'complete':
+                  setAnalysisStats(prev => ({
+                    ...prev,
+                    totalOpportunities: message.data.totalOpportunities,
+                    productsAnalyzed: message.data.productsAnalyzed,
+                    exchangeRate: EUR_TO_GBP_RATE,
+                    progressMessage: `Analysis complete! Found ${message.data.totalOpportunities} opportunities from ${message.data.storefrontsCount} selected storefronts.`,
+                    progress: 100
+                  }))
+                  break
+                  
+                case 'error':
+                  console.error('Analysis error:', message.data.error)
+                  alert(message.data.error)
+                  setAnalyzingSelectedStorefronts(false)
+                  // Update analysis stats to show error
+                  setAnalysisStats({
+                    totalOpportunities: 0,
+                    productsAnalyzed: 0,
+                    exchangeRate: EUR_TO_GBP_RATE,
+                    progressMessage: `Error: ${message.data.error}`,
+                    progress: 0
+                  })
+                  return // Exit the stream processing
+              }
+            } catch (parseError) {
+              console.error('Error parsing message:', parseError)
+            }
+          }
+        }
+      }
+      
+    } catch (error: any) {
+      console.error('Analysis error:', error)
+      alert(`Failed to analyze selected storefronts: ${error.message}`)
+    } finally {
+      setAnalyzingSelectedStorefronts(false)
     }
   }
 
@@ -693,8 +872,8 @@ function A2AEUPageContent() {
             <div className="bg-gradient-to-br from-white to-gray-50 rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Select Storefront</h3>
-                  <p className="text-sm text-gray-600">Choose a storefront to analyse deals</p>
+                  <h3 className="text-lg font-semibold text-gray-900">Select Storefronts</h3>
+                  <p className="text-sm text-gray-600">Choose storefronts to analyse deals</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-500">
@@ -702,76 +881,187 @@ function A2AEUPageContent() {
                   </span>
                 </div>
               </div>
-              
-              <Listbox value={selectedStorefront} onChange={setSelectedStorefront}>
-                <div className="relative">
-                  <Listbox.Button className="relative w-full cursor-pointer rounded-xl bg-white py-4 pl-6 pr-12 text-left border-2 border-gray-200 hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all shadow-sm">
-                    {selectedStorefront ? (
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="block font-semibold text-gray-900 text-lg">{selectedStorefront.name}</span>
-                          <span className="block text-gray-500 text-sm mt-1">Seller ID: {selectedStorefront.seller_id}</span>
-                        </div>
-                        <div className="flex items-center gap-2 mr-8">
-                          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                          <span className="text-sm text-gray-600">Active</span>
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="block text-gray-500">Choose a storefront to start</span>
-                    )}
-                    <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
-                      <div className="p-1 rounded-lg bg-gray-100">
-                        <ChevronDownIcon className="h-5 w-5 text-gray-600" aria-hidden="true" />
-                      </div>
-                    </span>
-                  </Listbox.Button>
-                  <Transition
-                    as={Fragment}
-                    enter="transition ease-out duration-100"
-                    enterFrom="transform opacity-0 scale-95"
-                    enterTo="transform opacity-100 scale-100"
-                    leave="transition ease-in duration-75"
-                    leaveFrom="transform opacity-100 scale-100"
-                    leaveTo="transform opacity-0 scale-95"
+
+              {/* Mode Switcher */}
+              <div className="mb-4">
+                <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit">
+                  <button
+                    onClick={() => handleSelectionModeChange('single')}
+                    className={`px-3 py-1.5 text-sm font-medium rounded transition-all ${
+                      selectionMode === 'single'
+                        ? 'bg-white text-indigo-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
                   >
-                    <Listbox.Options className="absolute z-10 mt-2 max-h-60 w-full overflow-auto rounded-xl bg-white py-2 text-base shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
-                      {storefronts.map((storefront) => (
-                        <Listbox.Option
-                          key={storefront.id}
-                          className={({ active }) =>
-                            `relative cursor-pointer select-none py-3 px-6 ${
-                              active ? 'bg-gradient-to-r from-indigo-50 to-violet-50' : ''
-                            }`
-                          }
-                          value={storefront}
-                        >
-                          {({ selected, active }) => (
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <span className={`block ${selected ? 'font-semibold text-indigo-900' : 'font-medium text-gray-900'}`}>
-                                  {storefront.name}
-                                </span>
-                                <span className={`block text-sm ${active ? 'text-indigo-700' : 'text-gray-500'}`}>
-                                  Seller ID: {storefront.seller_id}
-                                </span>
-                              </div>
-                              {selected && (
-                                <div className="flex items-center">
-                                  <CheckCircleIcon className="h-5 w-5 text-indigo-600" />
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </Listbox.Option>
-                      ))}
-                    </Listbox.Options>
-                  </Transition>
+                    Single
+                  </button>
+                  <button
+                    onClick={() => handleSelectionModeChange('multiple')}
+                    className={`px-3 py-1.5 text-sm font-medium rounded transition-all ${
+                      selectionMode === 'multiple'
+                        ? 'bg-white text-indigo-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Multiple
+                  </button>
+                  <button
+                    onClick={() => handleSelectionModeChange('all')}
+                    className={`px-3 py-1.5 text-sm font-medium rounded transition-all ${
+                      selectionMode === 'all'
+                        ? 'bg-white text-indigo-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    All
+                  </button>
                 </div>
-              </Listbox>
+              </div>
+
+              {/* Single Storefront Selector */}
+              {selectionMode === 'single' && (
+                <Listbox value={selectedStorefront} onChange={setSelectedStorefront}>
+                  <div className="relative">
+                    <Listbox.Button className="relative w-full cursor-pointer rounded-xl bg-white py-4 pl-6 pr-12 text-left border-2 border-gray-200 hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all shadow-sm">
+                      {selectedStorefront ? (
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="block font-semibold text-gray-900 text-lg">{selectedStorefront.name}</span>
+                            <span className="block text-gray-500 text-sm mt-1">Seller ID: {selectedStorefront.seller_id}</span>
+                          </div>
+                          <div className="flex items-center gap-2 mr-8">
+                            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                            <span className="text-sm text-gray-600">Active</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="block text-gray-500">Choose a storefront to start</span>
+                      )}
+                      <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
+                        <div className="p-1 rounded-lg bg-gray-100">
+                          <ChevronDownIcon className="h-5 w-5 text-gray-600" aria-hidden="true" />
+                        </div>
+                      </span>
+                    </Listbox.Button>
+                    <Transition
+                      as={Fragment}
+                      enter="transition ease-out duration-100"
+                      enterFrom="transform opacity-0 scale-95"
+                      enterTo="transform opacity-100 scale-100"
+                      leave="transition ease-in duration-75"
+                      leaveFrom="transform opacity-100 scale-100"
+                      leaveTo="transform opacity-0 scale-95"
+                    >
+                      <Listbox.Options className="absolute z-10 mt-2 max-h-60 w-full overflow-auto rounded-xl bg-white py-2 text-base shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
+                        {storefronts.map((storefront) => (
+                          <Listbox.Option
+                            key={storefront.id}
+                            className={({ active }) =>
+                              `relative cursor-pointer select-none py-3 px-6 ${
+                                active ? 'bg-gradient-to-r from-indigo-50 to-violet-50' : ''
+                              }`
+                            }
+                            value={storefront}
+                          >
+                            {({ selected, active }) => (
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <span className={`block ${selected ? 'font-semibold text-indigo-900' : 'font-medium text-gray-900'}`}>
+                                    {storefront.name}
+                                  </span>
+                                  <span className={`block text-sm ${active ? 'text-indigo-700' : 'text-gray-500'}`}>
+                                    Seller ID: {storefront.seller_id}
+                                  </span>
+                                </div>
+                                {selected && (
+                                  <div className="flex items-center">
+                                    <CheckCircleIcon className="h-5 w-5 text-indigo-600" />
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </Listbox.Option>
+                        ))}
+                      </Listbox.Options>
+                    </Transition>
+                  </div>
+                </Listbox>
+              )}
+
+              {/* Multiple Storefront Selector */}
+              {selectionMode === 'multiple' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-700">
+                        {selectedStorefronts.length} of {storefronts.length} selected
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleSelectAllStorefronts}
+                        className="text-xs text-indigo-600 hover:text-indigo-700 font-medium"
+                      >
+                        Select All
+                      </button>
+                      <span className="text-gray-300">|</span>
+                      <button
+                        onClick={handleClearAllStorefronts}
+                        className="text-xs text-gray-500 hover:text-gray-700 font-medium"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-white rounded-xl border-2 border-gray-200 max-h-60 overflow-y-auto">
+                    {storefronts.map((storefront) => {
+                      const isSelected = selectedStorefronts.some(s => s.id === storefront.id)
+                      return (
+                        <div
+                          key={storefront.id}
+                          className="flex items-center gap-3 p-4 border-b border-gray-100 last:border-b-0 hover:bg-gray-50 cursor-pointer"
+                          onClick={() => handleStorefrontToggle(storefront)}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => handleStorefrontToggle(storefront)}
+                            className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                          />
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-900">{storefront.name}</div>
+                            <div className="text-sm text-gray-500">Seller ID: {storefront.seller_id}</div>
+                          </div>
+                          {isSelected && (
+                            <CheckCircleIcon className="w-5 h-5 text-indigo-600" />
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* All Storefronts Mode */}
+              {selectionMode === 'all' && (
+                <div className="bg-white rounded-xl border-2 border-gray-200 p-4">
+                  <div className="flex items-center gap-3">
+                    <UserGroupIcon className="w-6 h-6 text-indigo-600" />
+                    <div>
+                      <div className="font-medium text-gray-900">All Storefronts Selected</div>
+                      <div className="text-sm text-gray-500">
+                        Analysing all {storefronts.length} storefronts: {storefronts.map(s => s.name).join(', ')}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               
               {/* Product Count and Sync */}
-              {selectedStorefront && (
+              {(selectionMode === 'single' && selectedStorefront) || 
+               (selectionMode === 'multiple' && selectedStorefronts.length > 0) || 
+               selectionMode === 'all' ? (
                 <div className="mt-4 p-4 bg-gradient-to-r from-indigo-50 to-violet-50 rounded-lg border border-indigo-100">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -783,30 +1073,34 @@ function A2AEUPageContent() {
                           {productCount} Products
                         </p>
                         <p className="text-xs text-gray-600">
-                          {productCount === 0 ? 'No products synced yet' : 'Ready to analyse'}
+                          {selectionMode === 'single' && selectedStorefront && `From ${selectedStorefront.name}`}
+                          {selectionMode === 'multiple' && `From ${selectedStorefronts.length} selected storefronts`}
+                          {selectionMode === 'all' && `From all ${storefronts.length} storefronts`}
                         </p>
                       </div>
                     </div>
-                    <button
-                      onClick={syncProducts}
-                      disabled={syncingProducts}
-                      className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-indigo-200 rounded-lg text-sm font-medium text-indigo-700 hover:bg-indigo-50 transition disabled:opacity-50"
-                    >
-                      {syncingProducts ? (
-                        <>
-                          <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                          Syncing...
-                        </>
-                      ) : (
-                        <>
-                          <ArrowPathIcon className="h-4 w-4" />
-                          Sync Products
-                        </>
-                      )}
-                    </button>
+                    {selectionMode === 'single' && selectedStorefront && (
+                      <button
+                        onClick={syncProducts}
+                        disabled={syncingProducts}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-indigo-200 rounded-lg text-sm font-medium text-indigo-700 hover:bg-indigo-50 transition disabled:opacity-50"
+                      >
+                        {syncingProducts ? (
+                          <>
+                            <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                            Syncing...
+                          </>
+                        ) : (
+                          <>
+                            <ArrowPathIcon className="h-4 w-4" />
+                            Sync Products
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
                   
-                  {productCount === 0 && (
+                  {productCount === 0 && selectionMode === 'single' && (
                     <div className="mt-3 p-2 bg-amber-50 border border-amber-200 rounded-md">
                       <p className="text-xs text-amber-800 flex items-start gap-1">
                         <ExclamationTriangleIcon className="h-3 w-3 mt-0.5 flex-shrink-0" />
@@ -815,7 +1109,7 @@ function A2AEUPageContent() {
                     </div>
                   )}
                 </div>
-              )}
+              ) : null}
               
               {/* Debug: Check Tables */}
               <div className="mt-2">
@@ -839,53 +1133,88 @@ function A2AEUPageContent() {
               {/* Analyze Buttons */}
               <div className="mt-4 flex gap-3">
                 {/* Single Storefront Analysis */}
-                <button
-                  onClick={analyzeArbitrage}
-                  disabled={!selectedStorefront || analyzing || productCount === 0}
-                  className="px-4 py-2.5 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-lg font-medium text-sm hover:from-violet-600 hover:to-indigo-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {analyzing ? (
-                    <>
-                      <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                      Analyzing...
-                    </>
-                  ) : productCount === 0 ? (
-                    <>
-                      <ExclamationTriangleIcon className="h-4 w-4" />
-                      Sync First
-                    </>
-                  ) : (
-                    <>
-                      <SparklesIcon className="h-4 w-4" />
-                      Analyze Storefront
-                    </>
-                  )}
-                </button>
+                {selectionMode === 'single' && (
+                  <button
+                    onClick={analyzeArbitrage}
+                    disabled={!selectedStorefront || analyzing || analyzingSelectedStorefronts || analyzingAllSellers || productCount === 0}
+                    className="px-4 py-2.5 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-lg font-medium text-sm hover:from-violet-600 hover:to-indigo-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {analyzing ? (
+                      <>
+                        <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                        Analyzing...
+                      </>
+                    ) : productCount === 0 ? (
+                      <>
+                        <ExclamationTriangleIcon className="h-4 w-4" />
+                        Sync First
+                      </>
+                    ) : (
+                      <>
+                        <SparklesIcon className="h-4 w-4" />
+                        Analyze Storefront
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {/* Multiple Storefronts Analysis */}
+                {selectionMode === 'multiple' && (
+                  <button
+                    onClick={analyzeSelectedStorefronts}
+                    disabled={selectedStorefronts.length === 0 || analyzingSelectedStorefronts || analyzing || analyzingAllSellers || productCount === 0}
+                    className="px-4 py-2.5 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-lg font-medium text-sm hover:from-orange-600 hover:to-red-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {analyzingSelectedStorefronts ? (
+                      <>
+                        <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                        Analyzing...
+                      </>
+                    ) : selectedStorefronts.length === 0 ? (
+                      <>
+                        <ExclamationTriangleIcon className="h-4 w-4" />
+                        Select Storefronts
+                      </>
+                    ) : productCount === 0 ? (
+                      <>
+                        <ExclamationTriangleIcon className="h-4 w-4" />
+                        No Products
+                      </>
+                    ) : (
+                      <>
+                        <BuildingStorefrontIcon className="h-4 w-4" />
+                        Analyze {selectedStorefronts.length} Storefront{selectedStorefronts.length > 1 ? 's' : ''}
+                      </>
+                    )}
+                  </button>
+                )}
                 
                 {/* All Sellers Analysis */}
-                <button
-                  onClick={analyzeAllSellers}
-                  disabled={analyzing || analyzingAllSellers || storefronts.length === 0}
-                  className="px-4 py-2.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-medium text-sm hover:from-green-600 hover:to-emerald-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {analyzingAllSellers ? (
-                    <>
-                      <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                      Analyzing All...
-                    </>
-                  ) : (
-                    <>
-                      <UserGroupIcon className="h-4 w-4" />
-                      All Sellers ({storefronts.length})
-                    </>
-                  )}
-                </button>
+                {selectionMode === 'all' && (
+                  <button
+                    onClick={analyzeAllSellers}
+                    disabled={analyzing || analyzingAllSellers || analyzingSelectedStorefronts || storefronts.length === 0}
+                    className="px-4 py-2.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-medium text-sm hover:from-green-600 hover:to-emerald-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {analyzingAllSellers ? (
+                      <>
+                        <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                        Analyzing All...
+                      </>
+                    ) : (
+                      <>
+                        <UserGroupIcon className="h-4 w-4" />
+                        All Sellers ({storefronts.length})
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
               
               {analysisStats && (
                 <div className="mt-4 space-y-3">
                   {/* Time Estimate Banner */}
-                  {analyzing && analysisStats.estimatedMinutesRemaining !== undefined && (
+                  {(analyzing || analyzingSelectedStorefronts || analyzingAllSellers) && analysisStats.estimatedMinutesRemaining !== undefined && (
                     <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">

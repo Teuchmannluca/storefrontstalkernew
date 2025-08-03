@@ -34,6 +34,8 @@ interface Storefront {
   storefront_url: string
   created_at: string
   product_count?: number
+  last_sync_completed_at?: string
+  new_products_last_scan?: number
 }
 
 type ViewMode = 'grid' | 'list'
@@ -52,6 +54,22 @@ export default function StorefrontsPage() {
   const [isUpdatingAll, setIsUpdatingAll] = useState(false)
   const router = useRouter()
   const { addSyncOperation, updateSyncOperation } = useSyncStatus()
+
+  const formatLastScan = (lastScanDate: string | null | undefined) => {
+    if (!lastScanDate) return 'Never scanned'
+    
+    const scanDate = new Date(lastScanDate)
+    const now = new Date()
+    const diffMs = now.getTime() - scanDate.getTime()
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+    const diffDays = Math.floor(diffHours / 24)
+    
+    if (diffHours < 1) return 'Just now'
+    if (diffHours < 24) return `${diffHours}h ago`
+    if (diffDays === 1) return 'Yesterday'
+    if (diffDays < 7) return `${diffDays} days ago`
+    return scanDate.toLocaleDateString()
+  }
 
   useEffect(() => {
     const checkUser = async () => {
@@ -84,21 +102,31 @@ export default function StorefrontsPage() {
   }, [router])
 
   const fetchStorefronts = async () => {
-    const { data, error } = await supabase
-      .from('storefronts')
-      .select(`
-        *,
-        products(count)
-      `)
-      .order('created_at', { ascending: false })
+    // Use raw SQL query to get storefront data with last scan info and new products count
+    const { data, error } = await supabase.rpc('get_storefronts_with_scan_data')
     
-    if (!error && data) {
-      // Transform the data to include product count
-      const storefrontsWithCount = data.map(storefront => ({
-        ...storefront,
-        product_count: storefront.products?.[0]?.count || 0
-      }))
-      setStorefronts(storefrontsWithCount)
+    if (error) {
+      console.error('Error fetching storefronts:', error)
+      // Fallback to basic query
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('storefronts')
+        .select(`
+          *,
+          products(count)
+        `)
+        .order('created_at', { ascending: false })
+      
+      if (!fallbackError && fallbackData) {
+        const storefrontsWithCount = fallbackData.map((storefront: any) => ({
+          ...storefront,
+          product_count: storefront.products?.[0]?.count || 0,
+          last_sync_completed_at: storefront.last_sync_completed_at,
+          new_products_last_scan: 0
+        }))
+        setStorefronts(storefrontsWithCount)
+      }
+    } else if (data) {
+      setStorefronts(data)
     }
   }
 
@@ -540,8 +568,16 @@ export default function StorefrontsPage() {
                   
                   <h3 className="font-semibold text-gray-900 mb-1">{storefront.name}</h3>
                   <p className="text-sm text-gray-500 mb-1">{storefront.seller_id}</p>
-                  <p className="text-sm font-medium text-indigo-600 mb-3">
+                  <p className="text-sm font-medium text-indigo-600 mb-1">
                     {storefront.product_count || 0} products
+                  </p>
+                  {storefront.new_products_last_scan && storefront.new_products_last_scan > 0 && (
+                    <p className="text-xs font-medium text-emerald-600 mb-1">
+                      +{storefront.new_products_last_scan} new
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-400 mb-3">
+                    Last scan: {formatLastScan(storefront.last_sync_completed_at)}
                   </p>
                   
                   <div className="mb-3 space-y-2">
@@ -574,6 +610,7 @@ export default function StorefrontsPage() {
                     <tr className="border-b border-gray-100">
                       <th className="text-left px-6 py-4 text-sm font-medium text-gray-700">Storefront</th>
                       <th className="text-left px-6 py-4 text-sm font-medium text-gray-700">Seller ID</th>
+                      <th className="text-left px-6 py-4 text-sm font-medium text-gray-700">Last Scan</th>
                       <th className="text-left px-6 py-4 text-sm font-medium text-gray-700">Date Added</th>
                       <th className="text-right px-6 py-4 text-sm font-medium text-gray-700">Actions</th>
                     </tr>
@@ -590,11 +627,21 @@ export default function StorefrontsPage() {
                               <Link href={`/dashboard/storefronts/${storefront.id}`} className="font-medium text-gray-900 hover:text-indigo-600">
                                 {storefront.name}
                               </Link>
-                              <p className="text-xs text-gray-500">{storefront.product_count || 0} products</p>
+                              <div className="flex items-center gap-2 text-xs text-gray-500">
+                                <span>{storefront.product_count || 0} products</span>
+                                {storefront.new_products_last_scan && storefront.new_products_last_scan > 0 && (
+                                  <span className="font-medium text-emerald-600">
+                                    +{storefront.new_products_last_scan} new
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-600">{storefront.seller_id}</td>
+                        <td className="px-6 py-4 text-sm text-gray-600">
+                          {formatLastScan(storefront.last_sync_completed_at)}
+                        </td>
                         <td className="px-6 py-4 text-sm text-gray-600">
                           {new Date(storefront.created_at).toLocaleDateString()}
                         </td>
