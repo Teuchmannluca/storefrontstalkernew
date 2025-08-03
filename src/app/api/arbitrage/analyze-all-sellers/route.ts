@@ -351,11 +351,49 @@ export async function POST(request: NextRequest) {
                   const fees = feesEstimate.feesEstimate;
                   const feeDetails = fees.feeDetailList || [];
                   
-                  const referralFee = feeDetails.find(f => f.feeType === 'ReferralFee')?.finalFee?.amount || 0;
+                  const referralFee = feeDetails.find(f => f.feeType === 'ReferralFee')?.finalFee.amount || 0;
                   const amazonFees = fees.totalFeesEstimate?.amount || 0;
-                  const digitalServicesFee = amazonFees * 0.02; // 2% of Amazon fees
+                  
+                  // Extract ALL individual fees from SP-API response
+                  let fbaFee = 0;
+                  let digitalServicesFee = 0;
+                  let variableClosingFee = 0;
+                  let fixedClosingFee = 0;
+                  
+                  for (const fee of feeDetails) {
+                    const feeAmount = fee.finalFee.amount || 0;
+                    switch (fee.feeType) {
+                      case 'FBAFees':
+                      case 'FulfillmentFees':
+                      case 'FBAPerUnitFulfillmentFee':
+                      case 'FBAPerOrderFulfillmentFee':
+                        fbaFee += feeAmount;
+                        break;
+                      case 'VariableClosingFee':
+                        variableClosingFee = feeAmount;
+                        break;
+                      case 'FixedClosingFee':
+                        fixedClosingFee = feeAmount;
+                        break;
+                    }
+                  }
+                  
+                  // Digital Services Fee - check if it's in the SP-API response
+                  const digitalServicesFeeFromAPI = feeDetails.find(f => 
+                    f.feeType === 'DigitalServicesFee' || 
+                    f.feeType === 'DigitalServiceTax' ||
+                    f.feeType === 'DST'
+                  )?.finalFee.amount;
+                  
+                  // Calculate DST as 2% of Amazon fees if not returned by API
+                  digitalServicesFee = digitalServicesFeeFromAPI || (amazonFees * 0.02);
+                  
+                  // VAT calculations
+                  const vatRate = 0.20; // UK VAT rate
+                  const vatOnSale = ukPrice / (1 + vatRate) * vatRate; // VAT portion of sale price (~£25.82 for £154.94)
+                  const vatOnCostOfGoods = 0; // Usually no VAT on EU purchases (reverse charge)
 
-                  // Check EU prices (EXACT SAME AS SINGLE SELLER)
+                  // Check EU prices
                   const euPrices: any[] = [];
                   let bestOpportunity: any = null;
 
@@ -368,17 +406,26 @@ export async function POST(request: NextRequest) {
                       ? sourcePrice * EUR_TO_GBP_RATE 
                       : sourcePrice;
 
-                    const totalCost = sourcePriceGBP + amazonFees + digitalServicesFee;
-                    const profit = ukPrice - totalCost;
+                    // Calculate profit using the net sale price (after VAT)
+                    // Net Revenue = Sale Price - VAT on Sale
+                    const netRevenue = ukPrice - vatOnSale;
+                    
+                    // Total Costs = Cost of Goods + Amazon Fees + Digital Services Fee
+                    const totalCosts = sourcePriceGBP + amazonFees + digitalServicesFee;
+                    
+                    // Net Profit = Net Revenue - Total Costs
+                    const profit = netRevenue - totalCosts;
                     const roi = (profit / sourcePriceGBP) * 100;
+                    const profitMargin = (profit / netRevenue) * 100;
 
                     const marketplacePrice = {
                       marketplace: country,
                       sourcePrice,
                       sourcePriceGBP,
                       profit,
+                      profitMargin,
                       roi,
-                      totalCost
+                      totalCost: totalCosts
                     };
 
                     euPrices.push(marketplacePrice);
