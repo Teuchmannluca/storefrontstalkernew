@@ -1244,15 +1244,12 @@ export default function RecentScansPage() {
                                 <button
                                   onClick={() => {
                                     const message = encodeURIComponent(
-                                      `🎯 *A2A EU Deal*\n\n` +
-                                      `📦 *Product:* ${opp.productName}\n` +
-                                      `🔗 *ASIN:* ${opp.asin}\n\n` +
-                                      `💰 *Profit:* £${(opp.bestOpportunity?.profit || 0).toFixed(2)} (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
-                                      `🛒 *Buy from:* Amazon ${opp.bestOpportunity?.marketplace || 'EU'}\n` +
-                                      `💵 *Buy Price:* £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)}\n` +
-                                      `🔗 ${`https://www.amazon.${getAmazonDomain(opp.bestOpportunity?.marketplace || 'DE')}/dp/${opp.asin}`}\n\n` +
-                                      `🇬🇧 *Sell in UK:* £${(opp.targetPrice || 0).toFixed(2)}\n` +
-                                      `🔗 ${`https://www.amazon.co.uk/dp/${opp.asin}`}`
+                                      `🎯 **Luca is the best Deal**\n\n` +
+                                      `🛍️ **${opp.productName}** (${opp.asin})\n` +
+                                      `💰 **Profit: £${(opp.bestOpportunity?.profit || 0).toFixed(2)}** (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
+                                      `📍 Buy: Amazon ${opp.bestOpportunity?.marketplace || 'EU'} - £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)}\n` +
+                                      `🇬🇧 Sell: Amazon UK - £${(opp.targetPrice || 0).toFixed(2)}\n\n` +
+                                      `🔗 [${opp.bestOpportunity?.marketplace || 'EU'} Link](${`https://www.amazon.${getAmazonDomain(opp.bestOpportunity?.marketplace || 'DE')}/dp/${opp.asin}`}) | [UK Link](${`https://www.amazon.co.uk/dp/${opp.asin}`})`
                                     );
                                     window.open(`https://wa.me/?text=${message}`, '_blank');
                                   }}

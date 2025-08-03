@@ -89,6 +89,12 @@ function A2AEUPageContent() {
     estimatedMinutesRemaining?: number
     processedCount?: number
     totalProducts?: number
+    // New fields for detailed All Sellers statistics
+    storefrontsCount?: number
+    uniqueAsins?: number
+    excludedCount?: number
+    blacklistedCount?: number
+    finalAsinCount?: number
   } | null>(null)
   const [productCount, setProductCount] = useState<number>(0)
   const [syncingProducts, setSyncingProducts] = useState(false)
@@ -200,7 +206,7 @@ function A2AEUPageContent() {
   const handleBlacklistConfirm = async () => {
     if (!blacklistConfirm) return
     
-    const success = await blacklistAsin(blacklistConfirm.asin, 'Blacklisted from A2A EU Deals')
+    const success = await blacklistAsin(blacklistConfirm.asin, 'Blacklisted from Luca is the best Deals')
     if (success) {
       setBlacklistConfirm(null)
       // Optionally refresh the opportunities or remove the blacklisted item
@@ -385,14 +391,20 @@ function A2AEUPageContent() {
                 case 'progress':
                   setAnalysisStats(prev => ({
                     totalOpportunities: opportunityCount,
-                    productsAnalyzed: 0,
+                    productsAnalyzed: message.data.productsAnalyzed || 0,
                     exchangeRate: EUR_TO_GBP_RATE,
                     ...prev,
                     progressMessage: message.data.step,
                     progress: message.data.progress,
                     estimatedMinutesRemaining: message.data.estimatedMinutesRemaining,
                     processedCount: message.data.processedCount,
-                    totalProducts: message.data.totalProducts
+                    totalProducts: message.data.totalProducts || message.data.finalAsinCount,
+                    // New detailed statistics for All Sellers scan
+                    storefrontsCount: message.data.storefrontsCount,
+                    uniqueAsins: message.data.uniqueAsins,
+                    excludedCount: message.data.excludedCount,
+                    blacklistedCount: message.data.blacklistedCount,
+                    finalAsinCount: message.data.finalAsinCount
                   }))
                   break
                   
@@ -1591,16 +1603,13 @@ function A2AEUPageContent() {
                           <button
                             onClick={() => {
                               const message = encodeURIComponent(
-                                `🎯 *A2A EU Deal*\n\n` +
-                                `📦 *Product:* ${opp.productName}\n` +
-                                `🔗 *ASIN:* ${opp.asin}\n\n` +
-                                `💰 *Profit:* £${(opp.bestOpportunity?.profit || 0).toFixed(2)} (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
-                                `🛒 *Buy from:* ${getCountryFlag(opp.bestOpportunity?.marketplace || 'EU')} Amazon ${opp.bestOpportunity?.marketplace || 'EU'}\n` +
-                                `💵 *Buy Price:* £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)} (€${(opp.bestOpportunity?.sourcePrice || 0).toFixed(2)})\n` +
-                                `🔗 ${`https://www.amazon.${getAmazonDomain(opp.bestOpportunity?.marketplace || 'DE')}/dp/${opp.asin}`}\n\n` +
-                                `🇬🇧 *Sell in UK:* £${(opp.targetPrice || 0).toFixed(2)}\n` +
-                                `🔗 ${`https://www.amazon.co.uk/dp/${opp.asin}`}\n\n` +
-                                `📸 *Product Image:* ${opp.productImage || 'No image available'}`
+                                `🎯 **Luca is the best Deal**\n\n` +
+                                `🛍️ **${opp.productName}** (${opp.asin})\n` +
+                                `💰 **Profit: £${(opp.bestOpportunity?.profit || 0).toFixed(2)}** (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
+                                `📍 Buy: Amazon ${opp.bestOpportunity?.marketplace || 'EU'} - £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)} (€${(opp.bestOpportunity?.sourcePrice || 0).toFixed(2)})\n` +
+                                `🇬🇧 Sell: Amazon UK - £${(opp.targetPrice || 0).toFixed(2)}\n\n` +
+                                `🔗 [${opp.bestOpportunity?.marketplace || 'EU'} Link](${`https://www.amazon.${getAmazonDomain(opp.bestOpportunity?.marketplace || 'DE')}/dp/${opp.asin}`}) | [UK Link](${`https://www.amazon.co.uk/dp/${opp.asin}`})\n` +
+                                `📸 [Image](${opp.productImage || 'No image available'})`
                               );
                               window.open(`https://wa.me/?text=${message}`, '_blank');
                             }}

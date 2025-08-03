@@ -39,6 +39,8 @@ interface GroupedProduct {
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [groupedProducts, setGroupedProducts] = useState<GroupedProduct[]>([])
+  const [totalProductsCount, setTotalProductsCount] = useState(0)
+  const [uniqueAsinsCount, setUniqueAsinsCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
@@ -76,7 +78,26 @@ export default function ProductsPage() {
 
       const storefrontIds = storefronts?.map(s => s.id) || []
 
-      // Then get products for those storefronts
+      // Get counts first
+      const { count: totalCount, error: countError } = await supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true })
+        .in('storefront_id', storefrontIds)
+
+      if (countError) throw countError
+      setTotalProductsCount(totalCount || 0)
+
+      // Get unique ASINs count
+      const { data: uniqueAsins, error: uniqueError } = await supabase
+        .from('products')
+        .select('asin')
+        .in('storefront_id', storefrontIds)
+
+      if (uniqueError) throw uniqueError
+      const uniqueAsinSet = new Set((uniqueAsins || []).map(p => p.asin))
+      setUniqueAsinsCount(uniqueAsinSet.size)
+
+      // Then get products for those storefronts (limit to 1000 for display)
       const { data, error } = await supabase
         .from('products')
         .select(`
@@ -85,6 +106,7 @@ export default function ProductsPage() {
         `)
         .in('storefront_id', storefrontIds)
         .order('created_at', { ascending: sortOrder === 'oldest' })
+        .limit(1000)
 
       if (error) throw error
 
@@ -143,6 +165,7 @@ export default function ProductsPage() {
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-900">All Products</h1>
             <p className="text-gray-600 mt-2">View all products across your storefronts</p>
+            <p className="text-sm text-gray-500 mt-1">Displaying latest 1,000 products for performance</p>
           </div>
 
           {/* Search Bar and Sort */}
@@ -171,15 +194,15 @@ export default function ProductsPage() {
           <div className="grid grid-cols-3 gap-4 mb-6">
             <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
               <p className="text-sm text-gray-600">Total Products</p>
-              <p className="text-2xl font-bold text-gray-900">{products.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{totalProductsCount.toLocaleString()}</p>
             </div>
             <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
               <p className="text-sm text-gray-600">Unique ASINs</p>
-              <p className="text-2xl font-bold text-gray-900">{groupedProducts.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{uniqueAsinsCount.toLocaleString()}</p>
             </div>
             <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
               <p className="text-sm text-gray-600">Duplicates</p>
-              <p className="text-2xl font-bold text-gray-900">{products.length - groupedProducts.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{(totalProductsCount - uniqueAsinsCount).toLocaleString()}</p>
             </div>
           </div>
 

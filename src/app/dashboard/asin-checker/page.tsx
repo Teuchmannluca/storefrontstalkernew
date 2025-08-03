@@ -14,6 +14,10 @@ import {
   XCircleIcon,
   ExclamationTriangleIcon
 } from '@heroicons/react/24/outline'
+import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator'
+import { categorizeProfitLevel, getProfitCategoryColor, getProfitCategoryBgColor, getProfitCategoryIcon, getProfitCategoryLabel } from '@/lib/profit-categorizer'
+import ASINListManager from '@/components/ASINListManager'
+import SaveASINListModal from '@/components/SaveASINListModal'
 
 // Exchange rate constant
 const EUR_TO_GBP_RATE = 0.86
@@ -37,14 +41,19 @@ interface ArbitrageOpportunity {
   referralFee: number
   fbaFee: number
   digitalServicesFee: number
+  vatOnSale?: number
+  netRevenue?: number
   ukCompetitors: number
-  ukLowestPrice: number
+  ukLowestPrice?: number
   ukSalesRank: number
+  salesPerMonth?: number
   euPrices: EUMarketplacePrice[]
   bestOpportunity: EUMarketplacePrice
+  profitCategory?: 'profitable' | 'breakeven' | 'loss'
 }
 
 type SortOption = 'profit' | 'roi' | 'margin' | 'price'
+type ProfitFilter = 'profitable' | 'include-breakeven' | 'all'
 
 export default function ASINCheckerPage() {
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([])
@@ -56,13 +65,20 @@ export default function ASINCheckerPage() {
     exchangeRate: number
     progressMessage?: string
     progress?: number
+    excludedCount?: number
+    totalAsins?: number
+    estimatedMinutesRemaining?: number
   } | null>(null)
-  const [showProfitableOnly, setShowProfitableOnly] = useState(true)
+  const [profitFilter, setProfitFilter] = useState<ProfitFilter>('profitable')
   const [sortBy, setSortBy] = useState<SortOption>('profit')
   const [selectedDeals, setSelectedDeals] = useState<Set<string>>(new Set())
   const [asinInput, setAsinInput] = useState('')
   const [asinList, setAsinList] = useState<string[]>([])
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
+  const [lastScanId, setLastScanId] = useState<string | null>(null)
+  const [showSaveListModal, setShowSaveListModal] = useState(false)
+  const [currentListId, setCurrentListId] = useState<string | null>(null)
+  const [currentListName, setCurrentListName] = useState<string | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -132,6 +148,28 @@ export default function ASINCheckerPage() {
     setValidationErrors({})
     setOpportunities([])
     setAnalysisStats(null)
+    setCurrentListId(null)
+    setCurrentListName(null)
+  }
+
+  // Load list handler
+  const handleLoadList = (asins: string[], listName: string, listId: string) => {
+    setAsinList(asins)
+    setCurrentListId(listId)
+    setCurrentListName(listName)
+    setAsinInput('')
+    setValidationErrors({})
+  }
+
+  // Scan list handler
+  const handleScanList = (asins: string[], listName: string, listId: string) => {
+    setAsinList(asins)
+    setCurrentListId(listId)
+    setCurrentListName(listName)
+    setAsinInput('')
+    setValidationErrors({})
+    // Trigger analysis immediately
+    setTimeout(() => analyzeASINs(), 100)
   }
 
   // Analyze ASINs for arbitrage
@@ -183,12 +221,18 @@ export default function ASINCheckerPage() {
                 case 'progress':
                   setAnalysisStats(prev => ({
                     totalOpportunities: opportunityCount,
-                    productsAnalyzed: message.data.current || 0,
+                    productsAnalyzed: message.data.processedCount || message.data.current || 0,
                     exchangeRate: EUR_TO_GBP_RATE,
                     ...prev,
                     progressMessage: message.data.step,
-                    progress: message.data.progress
+                    progress: message.data.progress,
+                    excludedCount: message.data.excludedCount,
+                    totalAsins: message.data.totalAsins,
+                    estimatedMinutesRemaining: message.data.estimatedMinutesRemaining
                   }))
+                  if (message.data.scanId) {
+                    setLastScanId(message.data.scanId)
+                  }
                   break
                   
                 case 'opportunity':
@@ -214,8 +258,12 @@ export default function ASINCheckerPage() {
                     productsAnalyzed: message.data.totalProducts,
                     exchangeRate: EUR_TO_GBP_RATE,
                     progressMessage: message.data.message,
-                    progress: 100
+                    progress: 100,
+                    excludedCount: message.data.excludedCount
                   }))
+                  if (message.data.scanId) {
+                    setLastScanId(message.data.scanId)
+                  }
                   break
                   
                 case 'error':
@@ -309,9 +357,23 @@ export default function ASINCheckerPage() {
             <p className="text-gray-600">Check specific ASINs for Amazon UK to EU arbitrage opportunities</p>
           </div>
 
+          {/* ASIN Lists Manager */}
+          <ASINListManager 
+            onLoadList={handleLoadList}
+            onScanList={handleScanList}
+            currentListId={currentListId}
+          />
+
           {/* ASIN Input Section */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Add ASINs to Check</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Add ASINs to Check</h2>
+              {currentListName && (
+                <span className="text-sm text-indigo-600">
+                  Loaded from: {currentListName}
+                </span>
+              )}
+            </div>
             
             <div className="space-y-4">
               <div>
@@ -336,6 +398,16 @@ export default function ASINCheckerPage() {
                   <PlusIcon className="w-5 h-5" />
                   Add ASINs
                 </button>
+                
+                {asinList.length > 0 && (
+                  <button
+                    onClick={() => setShowSaveListModal(true)}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center gap-2"
+                  >
+                    <DocumentDuplicateIcon className="w-5 h-5" />
+                    Save as List
+                  </button>
+                )}
                 
                 <button
                   onClick={() => {
@@ -431,7 +503,13 @@ export default function ASINCheckerPage() {
                     <div className="text-sm text-gray-600">
                       <p>Found {analysisStats.totalOpportunities} opportunities</p>
                       {analysisStats.productsAnalyzed > 0 && (
-                        <p>Analyzed {analysisStats.productsAnalyzed} products</p>
+                        <p>Analyzed {analysisStats.productsAnalyzed} of {analysisStats.totalAsins || asinList.length} ASINs</p>
+                      )}
+                      {analysisStats.excludedCount && analysisStats.excludedCount > 0 && (
+                        <p className="text-amber-600">{analysisStats.excludedCount} ASINs excluded (blacklisted)</p>
+                      )}
+                      {analysisStats.estimatedMinutesRemaining && analysisStats.estimatedMinutesRemaining > 0 && (
+                        <p>Estimated time remaining: {analysisStats.estimatedMinutesRemaining} minute{analysisStats.estimatedMinutesRemaining !== 1 ? 's' : ''}</p>
                       )}
                       <p>Exchange rate: €1 = £{analysisStats.exchangeRate}</p>
                     </div>
@@ -484,16 +562,18 @@ export default function ASINCheckerPage() {
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <button
-                      onClick={() => setShowProfitableOnly(!showProfitableOnly)}
-                      className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                        showProfitableOnly
-                          ? 'bg-green-100 text-green-700 border border-green-300'
-                          : 'bg-gray-100 text-gray-700 border border-gray-300'
-                      } hover:bg-opacity-80`}
-                    >
-                      {showProfitableOnly ? '✅ Profitable Only' : 'Show All'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-600">Show:</span>
+                      <select
+                        value={profitFilter}
+                        onChange={(e) => setProfitFilter(e.target.value as ProfitFilter)}
+                        className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="profitable">Profitable Only</option>
+                        <option value="include-breakeven">Include Break-Even</option>
+                        <option value="all">Show All Deals</option>
+                      </select>
+                    </div>
                     
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-600">Sort by:</span>
@@ -512,11 +592,11 @@ export default function ASINCheckerPage() {
                   
                   <div className="flex items-center gap-3">
                     {/* Select All for profitable deals */}
-                    {sortedOpportunities.filter(opp => !showProfitableOnly || (opp.bestOpportunity && opp.bestOpportunity.profit > 0)).length > 0 && (
+                    {sortedOpportunities.filter(opp => categorizeProfitLevel(opp.bestOpportunity?.profit || 0) === 'profitable').length > 0 && (
                       <button
                         onClick={() => {
                           const profitableAsins = sortedOpportunities
-                            .filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
+                            .filter(opp => categorizeProfitLevel(opp.bestOpportunity?.profit || 0) === 'profitable')
                             .map(opp => opp.asin);
                           if (selectedDeals.size === profitableAsins.length) {
                             setSelectedDeals(new Set());
@@ -526,7 +606,7 @@ export default function ASINCheckerPage() {
                         }}
                         className="px-3 py-2 text-sm font-medium text-indigo-600 hover:text-indigo-800"
                       >
-                        {selectedDeals.size > 0 && selectedDeals.size === sortedOpportunities.filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length 
+                        {selectedDeals.size > 0 && selectedDeals.size === sortedOpportunities.filter(opp => categorizeProfitLevel(opp.bestOpportunity?.profit || 0) === 'profitable').length 
                           ? 'Deselect All' 
                           : 'Select All Profitable'}
                       </button>
@@ -576,25 +656,41 @@ export default function ASINCheckerPage() {
 
               {/* Opportunity Cards - Same as A2A EU */}
               {(() => {
-                const filteredOpportunities = sortedOpportunities.filter(
-                  opp => !showProfitableOnly || (opp.bestOpportunity && opp.bestOpportunity.profit > 0)
-                );
+                const filteredOpportunities = sortedOpportunities.filter(opp => {
+                  const profitCategory = opp.profitCategory || categorizeProfitLevel(opp.bestOpportunity?.profit || 0);
+                  
+                  switch (profitFilter) {
+                    case 'profitable':
+                      return profitCategory === 'profitable';
+                    case 'include-breakeven':
+                      return profitCategory === 'profitable' || profitCategory === 'breakeven';
+                    case 'all':
+                      return true;
+                    default:
+                      return true;
+                  }
+                });
                 
-                if (filteredOpportunities.length === 0 && showProfitableOnly) {
+                if (filteredOpportunities.length === 0) {
                   return (
                     <div className="bg-yellow-50 rounded-xl p-8 text-center">
                       <p className="text-yellow-800 font-medium">
-                        No profitable opportunities found yet
+                        {profitFilter === 'profitable' 
+                          ? 'No profitable opportunities found yet'
+                          : profitFilter === 'include-breakeven'
+                            ? 'No profitable or break-even opportunities found yet'
+                            : 'No opportunities found yet'}
                       </p>
                       <p className="text-yellow-600 text-sm mt-1">
-                        {analyzing ? 'Still analyzing products...' : 'Try analyzing more products or adjusting your criteria'}
+                        {analyzing ? 'Still analyzing ASINs...' : 'Try analyzing more ASINs or adjusting your filter'}
                       </p>
                     </div>
                   );
                 }
                 
                 return filteredOpportunities.map((opp, index) => {
-                  const isProfitable = opp.bestOpportunity?.profit > 0;
+                  const profitCategory = opp.profitCategory || categorizeProfitLevel(opp.bestOpportunity?.profit || 0);
+                  const isProfitable = profitCategory === 'profitable';
                   
                   return (
                   <div key={opp.asin} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow relative">
@@ -639,6 +735,12 @@ export default function ASINCheckerPage() {
                           <h3 className="font-semibold text-gray-900 text-lg line-clamp-2 mb-2">{opp.productName}</h3>
                           <div className="flex items-center gap-4 text-sm text-gray-500">
                             <span>{opp.asin}</span>
+                            {opp.ukSalesRank > 0 && (
+                              <span>BSR: #{opp.ukSalesRank.toLocaleString()}</span>
+                            )}
+                            {(opp.salesPerMonth !== undefined && opp.salesPerMonth > 0) && (
+                              <span>Sales: ~{opp.salesPerMonth}/month</span>
+                            )}
                           </div>
                           <div className="flex gap-6 mt-2">
                             <a
@@ -665,25 +767,23 @@ export default function ASINCheckerPage() {
                       {/* Right: Profit Info */}
                       <div className="text-right">
                         <p className="text-sm text-gray-500 mb-1">NET PROFIT (INC-VAT)</p>
-                        <p className={`text-4xl font-bold ${opp.bestOpportunity?.profit > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <p className={`text-4xl font-bold ${getProfitCategoryColor(profitCategory)}`}>
                           £{(opp.bestOpportunity?.profit || 0).toFixed(2)}
                         </p>
-                        {opp.bestOpportunity?.profit > 0 && (
-                          <div className="flex items-center justify-end gap-1 mt-2">
-                            <span className="text-green-600">✓</span>
-                            <span className="text-green-600 font-medium">Profitable</span>
-                          </div>
-                        )}
+                        <div className="flex items-center justify-end gap-1 mt-2">
+                          <span className={getProfitCategoryColor(profitCategory)}>{getProfitCategoryIcon(profitCategory)}</span>
+                          <span className={`${getProfitCategoryColor(profitCategory)} font-medium`}>{getProfitCategoryLabel(profitCategory)}</span>
+                        </div>
                         <div className="flex gap-8 mt-4 text-sm">
                           <div>
                             <p className="text-gray-500">Margin</p>
-                            <p className="font-semibold text-green-600">
-                              {((opp.bestOpportunity?.profit / opp.targetPrice) * 100).toFixed(1)}%
+                            <p className={`font-semibold ${getProfitCategoryColor(profitCategory)}`}>
+                              {(opp.targetPrice > 0 ? (opp.bestOpportunity?.profit / opp.targetPrice) * 100 : 0).toFixed(1)}%
                             </p>
                           </div>
                           <div>
                             <p className="text-gray-500">ROI</p>
-                            <p className="font-semibold text-green-600">
+                            <p className={`font-semibold ${getProfitCategoryColor(profitCategory)}`}>
                               {(opp.bestOpportunity?.roi || 0).toFixed(1)}%
                             </p>
                           </div>
@@ -797,12 +897,12 @@ export default function ASINCheckerPage() {
                                 <div>
                                   <p className="text-xs text-gray-500">in_stock</p>
                                   <p className="text-xs text-gray-600 mt-1">
-                                    Margin: {((euPrice.profit / opp.targetPrice) * 100).toFixed(1)}%
+                                    Margin: {(opp.targetPrice > 0 ? (euPrice.profit / opp.targetPrice) * 100 : 0).toFixed(1)}%
                                   </p>
                                 </div>
                                 <div className="text-right">
                                   <p className={`text-lg font-bold ${
-                                    isProfitable ? 'text-green-600' : 'text-red-600'
+                                    (euPrice.profit || 0) > 0 ? 'text-green-600' : 'text-red-600'
                                   }`}>
                                     {(euPrice.roi || 0).toFixed(1)}%
                                   </p>
@@ -827,9 +927,9 @@ export default function ASINCheckerPage() {
                         <p className="font-semibold text-gray-900">£{(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)}</p>
                       </div>
                       <div>
-                        <p className="text-sm text-gray-500">VAT on Fees</p>
-                        <p className="font-semibold text-gray-900">£{((opp.amazonFees || 0) * 0.2).toFixed(2)}</p>
-                        <p className="text-xs text-green-600 mt-1">Reclaimable</p>
+                        <p className="text-sm text-gray-500">VAT on Sale</p>
+                        <p className="font-semibold text-gray-900">£{(opp.vatOnSale || (opp.targetPrice / 1.2 * 0.2)).toFixed(2)}</p>
+                        <p className="text-xs text-gray-600 mt-1">20% of sale</p>
                       </div>
                     </div>
                   </div>
@@ -841,6 +941,19 @@ export default function ASINCheckerPage() {
           )}
         </div>
       </div>
+      
+      {/* Save List Modal */}
+      <SaveASINListModal 
+        isOpen={showSaveListModal}
+        onClose={() => setShowSaveListModal(false)}
+        onSave={() => {
+          // Refresh the list manager by triggering a re-render
+          setShowSaveListModal(false)
+        }}
+        asins={asinList}
+        existingListId={currentListId}
+        existingListName={currentListName}
+      />
     </div>
   )
 }

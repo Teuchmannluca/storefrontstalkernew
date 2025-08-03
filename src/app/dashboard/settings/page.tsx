@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { User } from '@supabase/supabase-js'
 import Sidebar from '@/components/Sidebar'
 import ScheduleSettings from '@/components/ScheduleSettings'
+import ArbitrageScheduleSettings from '@/components/ArbitrageScheduleSettings'
 import {
   BellIcon,
   CogIcon
@@ -112,6 +113,22 @@ export default function SettingsPage() {
             {/* Schedule Settings Component */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
               <ScheduleSettings userId={user?.id} />
+            </div>
+
+            {/* Arbitrage Schedule Settings */}
+            <div className="mt-8">
+              <div className="mb-8">
+                <h2 className="text-xl font-semibold text-gray-800 mb-2">
+                  Automatic A2A EU Arbitrage Scans
+                </h2>
+                <p className="text-gray-600">
+                  Configure when to automatically scan for arbitrage opportunities across European marketplaces.
+                </p>
+              </div>
+              
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <ArbitrageScheduleSettings userId={user?.id} />
+              </div>
             </div>
 
             {/* Additional Settings Sections (placeholder for future) */}

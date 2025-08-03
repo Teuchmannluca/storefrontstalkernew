@@ -26,18 +26,10 @@ npm run dev              # Development server (localhost:3000)
 npm run build            # Production build with type checking
 npm run start            # Production server
 npm run lint             # ESLint with Next.js rules
-npm run test             # Playwright E2E tests (cross-browser)
-npm run test:ui          # Playwright tests with UI mode
-npm run test:headed      # Playwright tests in headed browser
-npm run test:sp-api      # Test Amazon SP-API connection (basic)
-npm run test:sp-api-v2   # Test SP-API connection (v2)
-npm run test:sp-api-endpoints  # Test specific SP-API endpoints
 npm run sync:catalog     # Sync product catalog from Amazon
-```
 
-## Test Scripts (Node.js)
-```bash
-node test-fees-api.sh           # Test fees calculation API
+# Testing Scripts (Node.js)
+node test-fees-api.js           # Test fees calculation API
 node test-specific-asin.js      # Test single ASIN processing
 node test-fees-comprehensive.js # Comprehensive fees testing
 node test-live-api.js          # Test live API connections
@@ -49,7 +41,8 @@ node test-live-api.js          # Test live API connections
 - **Next.js 15.4.5** with App Router for server-side rendering and API routes
 - **Supabase** for authentication, database (PostgreSQL), and Row Level Security
 - **TypeScript** for type safety across the codebase
-- **Playwright** for cross-browser E2E testing
+- **Vercel** for deployment with cron job scheduling
+- **Tailwind CSS** for styling with Headless UI components
 
 ### API Architecture
 - All API routes in `/src/app/api/` use Next.js 15 route handlers (App Router)
@@ -88,6 +81,16 @@ node test-live-api.js          # Test live API connections
 - Message types: `progress`, `opportunity`, `complete`, `error`
 - Client-side error handling must not throw to maintain stream
 
+### Scheduled Operations Architecture
+- **Cron Jobs**: Two main scheduled operations via Vercel cron
+  - Storefront updates: Daily at 2:00 AM UTC (`/api/cron/check-schedules`)
+  - Arbitrage scans: Hourly at 15 minutes past (`/api/cron/check-arbitrage-schedules`)
+- **User Schedule Tables**: 
+  - `user_schedule_settings` for storefront sync scheduling
+  - `user_arbitrage_schedule_settings` for A2A EU scan scheduling
+- **Scheduling Features**: Frequency (daily/every 2 days/weekly), time zones, days of week selection
+- **Automatic Next Run Calculation**: Database triggers calculate next execution time
+
 ## Critical Implementation Details
 
 ### Product Sync Flow
@@ -98,13 +101,16 @@ node test-live-api.js          # Test live API connections
 5. **Database Updates**: Bulk upsert to products table with conflict handling
 
 ### Arbitrage Analysis Flow
-1. **Data Collection**: Fetch pricing from all EU marketplaces concurrently
-2. **Blacklist Filtering**: Exclude user-blacklisted ASINs before analysis
-3. **Sales Data Integration**: Use actual sales_per_month from products table or calculate from sales rank
-4. **Fee Calculation**: UK Amazon fees (15% + £3) + 2% digital services fee
-5. **Currency Conversion**: EUR to GBP at 0.86 rate (from exchange-rates.ts)
-6. **Opportunity Detection**: All deals categorized (profitable/break-even/loss)
-7. **Scan Persistence**: All deals saved to arbitrage_scans and arbitrage_opportunities tables with profit_category
+1. **ASIN Collection**: Comprehensive collection of all ASINs from all user storefronts
+2. **Deduplication**: Remove duplicate ASINs while tracking which storefronts carry each product
+3. **Blacklist Filtering**: Exclude user-blacklisted ASINs before analysis starts
+4. **Progress Streaming**: Real-time updates showing collection statistics and filtering results
+5. **Data Collection**: Fetch pricing from all EU marketplaces concurrently
+6. **Sales Data Integration**: Use actual sales_per_month from products table or calculate from sales rank
+7. **Fee Calculation**: UK Amazon fees (15% + £3) + 2% digital services fee
+8. **Currency Conversion**: EUR to GBP at 0.86 rate (from exchange-rates.ts)
+9. **Opportunity Detection**: All deals categorized (profitable/break-even/loss)
+10. **Scan Persistence**: All deals saved to arbitrage_scans and arbitrage_opportunities tables with profit_category
 
 ### ASIN Blacklist Feature
 - **Purpose**: Allow users to exclude specific ASINs from arbitrage analysis
@@ -143,6 +149,12 @@ node test-live-api.js          # Test live API connections
 - `arbitrage_opportunities`: All deals with profit_category classification (profitable/break-even/loss)
 - `asin_blacklist`: User-specific blacklisted ASINs excluded from scans
 
+### Scheduling Tables
+- `user_schedule_settings`: Storefront update scheduling configuration
+- `user_arbitrage_schedule_settings`: A2A EU arbitrage scan scheduling configuration
+- Both tables include: enabled, frequency, time_of_day, timezone, days_of_week, scan_type (arbitrage only)
+- Views: `schedules_due_for_execution` and `arbitrage_schedules_due_for_execution` for cron queries
+
 ### Sales Data Integration
 - **products.sales_per_month**: Calculated from sales rank using estimateMonthlySalesFromRank()
 - **products.current_sales_rank**: Amazon BSR (Best Sellers Rank) from SP-API
@@ -156,6 +168,8 @@ node test-live-api.js          # Test live API connections
 4. `add_unique_constraint_seller_id.sql`
 5. `create_asin_blacklist_table.sql` (ASIN blacklist functionality)
 6. `add_profit_category_column.sql` (Break-even deals classification)
+7. `create_user_schedule_settings.sql` (storefront update scheduling)
+8. `create_user_arbitrage_schedule_settings.sql` (A2A EU scan scheduling)
 
 ## Common Issues & Solutions
 
@@ -200,12 +214,10 @@ All stored in `.env.local`:
 ### External APIs
 - `KEEPA_API_KEY`
 
-## Testing Strategy
-- Playwright for E2E tests in `/tests` directory
-- Tests run on Chromium, Firefox, and WebKit
-- Development server auto-starts for tests
-- Use `npm run test:ui` for interactive debugging
-- SP-API connection tests via `npm run test:sp-api`
+### Cron Jobs
+- `CRON_SECRET` (optional, defaults to 'default-secret')
+- `NEXT_PUBLIC_SITE_URL` (for internal API calls from cron jobs)
+
 
 ## API Route Organization
 ```
@@ -220,6 +232,9 @@ All stored in `.env.local`:
 │   ├── item/[asin]/         # Individual ASIN lookup
 │   ├── search/              # Catalog search
 │   └── sync-products/       # Bulk product sync
+├── cron/
+│   ├── check-schedules/     # Storefront update scheduling
+│   └── check-arbitrage-schedules/ # A2A EU scan scheduling
 ├── fees/
 │   └── comprehensive/       # Comprehensive fee calculation
 ├── pricing/
@@ -248,6 +263,26 @@ All stored in `.env.local`:
 - Concurrent marketplace pricing requests with staggered delays
 - Efficient Set-based blacklist filtering
 - Sales data calculated once during sync, cached in database
+
+## Key Components Architecture
+
+### Scheduling Components
+- **ScheduleSettings.tsx**: Storefront update scheduling UI (frequency, time, timezone)
+- **ArbitrageScheduleSettings.tsx**: A2A EU scan scheduling UI with scan type selection
+- Both components load/save to respective schedule settings tables
+- Real-time display of last run and next scheduled run times
+
+### Main Dashboard Pages
+- **A2A EU page** (`/dashboard/a2a-eu/`): Single/all seller arbitrage analysis with streaming updates
+- **Recent Scans page** (`/dashboard/recent-scans/`): Historical scan results with profit filtering
+- **Settings page** (`/dashboard/settings/`): User configuration including both scheduling systems
+- **Blacklist page** (`/dashboard/blacklist/`): ASIN exclusion management
+
+### Reusable UI Components
+- **SavedScansPanel/SavedScansInline**: Historical scan display with filtering
+- **Sidebar**: Main navigation with active state management
+- **UpdateProgressBar**: Real-time sync progress display
+- **SyncButton variants**: Immediate sync triggers for storefronts
 
 ## Key Utilities and Libraries
 - **Rate Limiting**: `sp-api-rate-limiter.ts` (token bucket implementation)

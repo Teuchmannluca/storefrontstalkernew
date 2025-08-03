@@ -135,24 +135,53 @@ export async function POST(request: NextRequest) {
 
         sendMessage({ 
           type: 'progress', 
-          data: { step: `Found ${storefronts.length} storefronts. Fetching products...`, progress: 5, scanId } 
+          data: { step: `Found ${storefronts.length} storefronts. Collecting all products...`, progress: 5, scanId } 
         });
 
-        // Fetch all products from all storefronts
+        // Fetch ALL products from ALL storefronts - use regular join to ensure complete coverage
+        console.log(`Fetching products from ${storefronts.length} storefronts:`, storefronts.map(s => s.name));
         const { data: allProducts, error: productsError } = await supabase
           .from('products')
-          .select('*, storefronts!inner(id, name, seller_id)')
+          .select(`
+            *,
+            storefronts (
+              id,
+              name,
+              seller_id
+            )
+          `)
           .in('storefront_id', storefronts.map(s => s.id))
           .order('asin');
 
-        if (productsError || !allProducts || allProducts.length === 0) {
-          sendMessage({ type: 'error', data: { error: 'No products found across storefronts' } });
+        console.log(`Query result: ${allProducts?.length || 0} products found`);
+
+        if (productsError) {
+          console.error('Products query error:', productsError);
+          sendMessage({ type: 'error', data: { error: `Failed to fetch products: ${productsError.message}` } });
           return;
+        }
+
+        if (!allProducts || allProducts.length === 0) {
+          sendMessage({ type: 'error', data: { error: 'No products found across storefronts. Please sync your storefronts first.' } });
+          return;
+        }
+
+        // Add validation: check which storefronts have products
+        const storefrontsWithProducts = new Set(allProducts.map(p => p.storefront_id));
+        const emptyStorefronts = storefronts.filter(s => !storefrontsWithProducts.has(s.id));
+        
+        if (emptyStorefronts.length > 0) {
+          console.log(`Warning: ${emptyStorefronts.length} storefronts have no products:`, emptyStorefronts.map(s => s.name));
         }
 
         sendMessage({ 
           type: 'progress', 
-          data: { step: `Found ${allProducts.length} total products. Deduplicating ASINs...`, progress: 10 } 
+          data: { 
+            step: `Found ${allProducts.length} total products from ${storefronts.length} storefronts. Deduplicating ASINs...`, 
+            progress: 8,
+            totalProducts: allProducts.length,
+            storefrontsCount: storefronts.length
+          } 
         });
 
         // Deduplicate ASINs and track which storefronts have each ASIN
@@ -160,6 +189,11 @@ export async function POST(request: NextRequest) {
         
         for (const product of allProducts) {
           const storefront = product.storefronts;
+          
+          if (!storefront) {
+            console.warn(`Product ${product.asin} has no storefront data, skipping`);
+            continue;
+          }
           
           if (uniqueProductsMap.has(product.asin)) {
             // Add this storefront to the existing ASIN
@@ -188,11 +222,15 @@ export async function POST(request: NextRequest) {
 
         const uniqueProducts = Array.from(uniqueProductsMap.values());
         
+        console.log(`Deduplication complete: ${allProducts.length} total products -> ${uniqueProducts.length} unique ASINs`);
+        
         sendMessage({ 
           type: 'progress', 
           data: { 
-            step: `Found ${uniqueProducts.length} unique ASINs. Checking blacklist...`, 
-            progress: 13 
+            step: `Identified ${uniqueProducts.length} unique ASINs across all storefronts. Applying blacklist filter...`, 
+            progress: 12,
+            uniqueAsins: uniqueProducts.length,
+            totalProducts: allProducts.length
           } 
         });
 
@@ -202,20 +240,37 @@ export async function POST(request: NextRequest) {
           envCheck.values.supabaseServiceKey
         );
         
+        console.log('Loading user blacklist...');
         const blacklistedAsins = await blacklistService.getBlacklistedAsins(user.id);
+        console.log(`User has ${blacklistedAsins.size} blacklisted ASINs`);
+        
         const { filteredProducts, excludedCount } = blacklistService.filterBlacklistedProducts(
           uniqueProducts,
           blacklistedAsins
         );
 
+        console.log(`Blacklist filtering: ${uniqueProducts.length} ASINs -> ${excludedCount} excluded -> ${filteredProducts.length} remaining`);
+
         if (excludedCount > 0) {
           sendMessage({ 
             type: 'progress', 
             data: { 
-              step: `Excluded ${excludedCount} blacklisted ASINs. Proceeding with ${filteredProducts.length} unique ASINs...`, 
-              progress: 14,
+              step: `Blacklist applied: Excluded ${excludedCount} blacklisted ASINs. Analyzing ${filteredProducts.length} ASINs for arbitrage opportunities...`, 
+              progress: 15,
               excludedCount,
-              blacklistedCount: blacklistedAsins.size
+              blacklistedCount: blacklistedAsins.size,
+              finalAsinCount: filteredProducts.length
+            } 
+          });
+        } else {
+          sendMessage({ 
+            type: 'progress', 
+            data: { 
+              step: `No blacklisted ASINs found. Analyzing all ${filteredProducts.length} unique ASINs for arbitrage opportunities...`, 
+              progress: 15,
+              excludedCount: 0,
+              blacklistedCount: blacklistedAsins.size,
+              finalAsinCount: filteredProducts.length
             } 
           });
         }
