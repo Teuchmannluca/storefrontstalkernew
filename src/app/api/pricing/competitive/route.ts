@@ -62,36 +62,56 @@ export async function POST(request: NextRequest) {
 
     // Format response
     const formattedProducts = products.map(product => {
-      const competitivePrices = product.competitivePricing?.competitivePrices || [];
-      const numberOfOfferListings = product.competitivePricing?.numberOfOfferListings || [];
+      // SP-API client transforms the data structure - check both formats
+      const competitivePrices = (product.competitivePricing as any)?.CompetitivePrices || product.competitivePricing?.competitivePrices || [];
+      const numberOfOfferListings = (product.competitivePricing as any)?.NumberOfOfferListings || product.competitivePricing?.numberOfOfferListings || [];
       const salesRankings = product.salesRankings || [];
       
-      // Find lowest price
-      const lowestPrice = competitivePrices
-        .filter(cp => cp.condition === 'New')
-        .sort((a, b) => a.price.amount - b.price.amount)[0];
-      
-      // Find buy box price
-      const buyBoxPrice = competitivePrices.find(cp => 
-        cp.competitivePriceId === 'B2C' && cp.belongsToRequester === false
+      // IMPORTANT: Filter out USED products - only consider NEW condition
+      const newConditionPrices = competitivePrices.filter((cp: any) => 
+        cp.condition === 'New' || cp.condition === 'new' || !cp.condition
       );
+      
+      // Find buy box price (most important for arbitrage) - NEW only
+      const buyBoxPrice = newConditionPrices.find((cp: any) => 
+        cp.CompetitivePriceId === '1' || cp.competitivePriceId === '1'
+      );
+      
+      // Find featured offer price as fallback - NEW only
+      const featuredOfferPrice = newConditionPrices.find((cp: any) => 
+        cp.CompetitivePriceId === 'B2C' || cp.competitivePriceId === 'B2C' || 
+        cp.CompetitivePriceId === '2' || cp.competitivePriceId === '2'
+      );
+      
+      // Use buy box price or featured offer price or first available NEW item
+      const mainPrice = buyBoxPrice || featuredOfferPrice || newConditionPrices[0];
 
       return {
         asin: product.asin,
         marketplaceId: product.marketplaceId,
-        competitivePrices: competitivePrices.map(cp => ({
-          id: cp.competitivePriceId,
-          price: cp.price,
+        totalCompetitivePrices: competitivePrices.length,
+        newConditionPricesCount: newConditionPrices.length,
+        hasNewPrices: newConditionPrices.length > 0,
+        competitivePrices: competitivePrices.map((cp: any) => ({
+          id: cp.CompetitivePriceId || cp.competitivePriceId,
+          price: cp.Price || cp.price,
           condition: cp.condition,
           subcondition: cp.subcondition,
           offerType: cp.offerType,
           belongsToRequester: cp.belongsToRequester
         })),
-        lowestPrice: lowestPrice?.price,
-        buyBoxPrice: buyBoxPrice?.price,
-        numberOfOffers: numberOfOfferListings.reduce((acc, listing) => ({
+        newConditionPrices: newConditionPrices.map((cp: any) => ({
+          id: cp.CompetitivePriceId || cp.competitivePriceId,
+          price: cp.Price || cp.price,
+          condition: cp.condition
+        })),
+        buyBoxPrice: buyBoxPrice?.Price || buyBoxPrice?.price,
+        featuredOfferPrice: featuredOfferPrice?.Price || featuredOfferPrice?.price,
+        mainPrice: mainPrice?.Price || mainPrice?.price,
+        warning: newConditionPrices.length === 0 ? 'No NEW condition prices available - product will be skipped in arbitrage analysis' : null,
+        numberOfOffers: numberOfOfferListings.reduce((acc: any, listing: any) => ({
           ...acc,
-          [listing.condition]: listing.count
+          [listing.condition]: listing.Count || listing.count
         }), {}),
         salesRankings: salesRankings.map(rank => ({
           category: rank.productCategoryId,
@@ -105,7 +125,14 @@ export async function POST(request: NextRequest) {
       success: true,
       products: formattedProducts,
       requestedAsins: asins,
-      returnedCount: formattedProducts.length
+      returnedCount: formattedProducts.length,
+      timestamp: Date.now() // Ensure fresh data
+    }, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     });
 
   } catch (error: any) {

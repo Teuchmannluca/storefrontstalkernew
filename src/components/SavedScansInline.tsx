@@ -13,7 +13,8 @@ import {
   CalendarIcon,
   ShoppingBagIcon,
   TrophyIcon,
-  MagnifyingGlassIcon
+  MagnifyingGlassIcon,
+  TrashIcon
 } from '@heroicons/react/24/outline'
 
 interface SavedScan {
@@ -42,6 +43,10 @@ export default function SavedScansInline({ onLoadScan }: SavedScansInlineProps) 
   const [searchTerm, setSearchTerm] = useState('')
   const [showAll, setShowAll] = useState(false)
   const [isExpanded, setIsExpanded] = useState(false)
+  
+  // Delete functionality state
+  const [deletingScanId, setDeletingScanId] = useState<string | null>(null)
+  const [scanToDelete, setScanToDelete] = useState<SavedScan | null>(null)
 
   useEffect(() => {
     fetchSavedScans()
@@ -116,6 +121,44 @@ export default function SavedScansInline({ onLoadScan }: SavedScansInlineProps) 
     if (diffHours < 24) return `${diffHours}h ago`
     if (diffDays < 7) return `${diffDays}d ago`
     return past.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  }
+
+  const handleDeleteScan = async (scanId: string) => {
+    try {
+      setDeletingScanId(scanId)
+      
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        console.error('User not logged in')
+        return
+      }
+
+      const response = await fetch(`/api/arbitrage/scans/${scanId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to delete scan')
+      }
+
+      // Remove the scan from the local state
+      setSavedScans(prevScans => prevScans.filter(scan => scan.id !== scanId))
+      
+    } catch (error) {
+      console.error('Error deleting scan:', error)
+    } finally {
+      setDeletingScanId(null)
+    }
+  }
+
+  const confirmDeleteScan = (scan: SavedScan) => {
+    setScanToDelete(scan)
   }
 
   const filteredScans = savedScans
@@ -231,9 +274,28 @@ export default function SavedScansInline({ onLoadScan }: SavedScansInlineProps) 
                         </div>
                       </div>
                       
-                      {scan.status === 'completed' && scan.opportunities_found > 0 && (
-                        <ChevronRightIcon className="w-4 h-4 text-gray-400" />
-                      )}
+                      <div className="flex items-center gap-2">
+                        {/* Small integrated delete button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation() // Prevent scan click
+                            handleDeleteScan(scan.id) // Delete immediately without confirmation
+                          }}
+                          disabled={deletingScanId === scan.id}
+                          className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Delete scan and all opportunities"
+                        >
+                          {deletingScanId === scan.id ? (
+                            <ArrowPathIcon className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <TrashIcon className="w-3 h-3" />
+                          )}
+                        </button>
+                        
+                        {scan.status === 'completed' && scan.opportunities_found > 0 && (
+                          <ChevronRightIcon className="w-4 h-4 text-gray-400" />
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -249,6 +311,68 @@ export default function SavedScansInline({ onLoadScan }: SavedScansInlineProps) 
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {scanToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+                <TrashIcon className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Delete Scan</h3>
+                <p className="text-sm text-gray-500">This action cannot be undone</p>
+              </div>
+            </div>
+            
+            <div className="mb-6">
+              <p className="text-gray-700 mb-3">
+                Are you sure you want to delete this scan and all associated opportunities?
+              </p>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <div className="text-sm">
+                  <div className="font-medium text-gray-900">{scanToDelete.storefront_name || 'All Storefronts'}</div>
+                  <div className="text-gray-500">
+                    {getScanTypeLabel(scanToDelete.scan_type)} • {formatTimeAgo(scanToDelete.started_at)}
+                  </div>
+                  {scanToDelete.opportunities_found > 0 && (
+                    <div className="text-red-600 font-medium mt-1">
+                      {scanToDelete.opportunities_found} opportunities will be permanently deleted
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={() => setScanToDelete(null)}
+                className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteScan(scanToDelete.id)}
+                disabled={deletingScanId === scanToDelete.id}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              >
+                {deletingScanId === scanToDelete.id ? (
+                  <>
+                    <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <TrashIcon className="w-4 h-4" />
+                    Delete Scan
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

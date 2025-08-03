@@ -102,7 +102,14 @@ export async function POST(request: NextRequest) {
       },
       offers: offers.slice(0, 20), // Return top 20 offers
       lowestPricedOffers: lowestPricedData.lowestPricedOffers,
-      requestedCondition: itemCondition
+      requestedCondition: itemCondition,
+      timestamp: Date.now() // Ensure fresh data
+    }, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     });
 
   } catch (error: any) {

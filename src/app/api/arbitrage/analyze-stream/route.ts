@@ -338,23 +338,75 @@ export async function POST(request: NextRequest) {
                   pricingByAsin.set(asin, {});
                 }
                 
-                let priceData = product.competitivePricing?.CompetitivePrices?.find(
+                // SP-API returns CompetitivePrices array with different structure
+                const competitivePrices = product.competitivePricing?.CompetitivePrices || [];
+                
+                // IMPORTANT: Filter out USED products - only consider NEW condition
+                const newConditionPrices = competitivePrices.filter(
+                  (cp: any) => cp.condition === 'New' || cp.condition === 'new' || !cp.condition
+                );
+                
+                // Skip this product entirely if no NEW condition prices available
+                if (newConditionPrices.length === 0) {
+                  if (debug) {
+                    console.log(`[DEBUG] Skipping ${asin} in ${country} - no NEW condition prices available`);
+                  }
+                  return; // Skip this product
+                }
+                
+                // Look for buy box price first (CompetitivePriceId '1' is usually buy box) - NEW only
+                let buyBoxPrice = newConditionPrices.find(
                   (cp: any) => cp.CompetitivePriceId === '1'
                 );
                 
-                if (!priceData && product.competitivePricing?.CompetitivePrices?.length > 0) {
-                  priceData = product.competitivePricing.CompetitivePrices[0];
-                }
+                // If no buy box with '1', look for other competitive prices - NEW only
+                let featuredPrice = newConditionPrices.find(
+                  (cp: any) => cp.CompetitivePriceId === 'B2C' || cp.CompetitivePriceId === '2'
+                );
+                
+                // Use buy box price preferentially, then featured price, then first available NEW item
+                const priceData = buyBoxPrice || featuredPrice || newConditionPrices[0];
                 
                 if (priceData && priceData.Price) {
-                  pricingByAsin.get(asin)[country] = {
-                    price: priceData.Price.ListingPrice?.Amount || priceData.Price.LandedPrice?.Amount,
-                    currency: priceData.Price.ListingPrice?.CurrencyCode,
-                    numberOfOffers: product.competitivePricing?.NumberOfOfferListings?.find(
-                      (l: any) => l.condition === 'New'
-                    )?.Count || 0,
-                    salesRankings: product.salesRankings
-                  };
+                  // Check both ListingPrice and LandedPrice structures
+                  const listingPrice = priceData.Price.ListingPrice || priceData.Price.LandedPrice;
+                  const price = listingPrice?.Amount;
+                  const currency = listingPrice?.CurrencyCode;
+                  
+                  // Debug logging for pricing discrepancies
+                  if (debug && asin === 'B01JUUHJF4') {
+                    console.log(`[DEBUG] ${country} pricing for ${asin}:`, {
+                      totalCompetitivePrices: competitivePrices.length,
+                      newConditionPricesCount: newConditionPrices.length,
+                      allPrices: competitivePrices.map((cp: any) => ({
+                        id: cp.CompetitivePriceId,
+                        price: cp.Price,
+                        condition: cp.condition,
+                        belongsToRequester: cp.belongsToRequester
+                      })),
+                      filteredNewPrices: newConditionPrices.map((cp: any) => ({
+                        id: cp.CompetitivePriceId,
+                        price: cp.Price,
+                        condition: cp.condition
+                      })),
+                      selectedPrice: priceData,
+                      finalPrice: price,
+                      currency: currency
+                    });
+                  }
+                  
+                  if (price && currency) {
+                    pricingByAsin.get(asin)[country] = {
+                      price: price,
+                      currency: currency,
+                      priceType: buyBoxPrice ? 'buy_box' : (featuredPrice ? 'featured_offer' : 'first_available'),
+                      competitivePriceId: priceData.CompetitivePriceId,
+                      numberOfOffers: product.competitivePricing?.NumberOfOfferListings?.find(
+                        (l: any) => l.condition === 'New'
+                      )?.Count || 0,
+                      salesRankings: product.salesRankings
+                    };
+                  }
                 }
               });
             });
@@ -371,6 +423,32 @@ export async function POST(request: NextRequest) {
               }
 
               const ukPrice = marketplacePrices.UK.price;
+              
+              // Skip products without valid UK pricing (might be USED only)
+              if (!ukPrice || ukPrice <= 0) {
+                if (debug) {
+                  console.log(`[DEBUG] Skipping ${asin} - no valid UK NEW price available`);
+                }
+                processedCount++;
+                continue;
+              }
+              
+              // Check if we have at least one EU marketplace with valid NEW pricing
+              const validEuMarketplaces = Object.entries(marketplacePrices)
+                .filter(([country, data]) => 
+                  country !== 'UK' && 
+                  data && 
+                  (data as any).price && 
+                  (data as any).price > 0
+                );
+              
+              if (validEuMarketplaces.length === 0) {
+                if (debug) {
+                  console.log(`[DEBUG] Skipping ${asin} - no valid EU NEW prices available`);
+                }
+                processedCount++;
+                continue;
+              }
               const ukCompetitors = marketplacePrices.UK.numberOfOffers;
               // Use sales rank from database first, fallback to SP-API data
               const ukSalesRank = product.current_sales_rank || marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
