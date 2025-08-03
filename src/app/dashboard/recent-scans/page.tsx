@@ -83,6 +83,14 @@ export default function RecentScansPage() {
   const [loadingScanResults, setLoadingScanResults] = useState(false)
   const [selectedDeals, setSelectedDeals] = useState<Set<string>>(new Set())
   
+  // Sorting and filtering state
+  const [sortBy, setSortBy] = useState<'profit' | 'roi' | 'profitMargin' | 'targetPrice' | 'ukSalesRank'>('profit')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [minProfit, setMinProfit] = useState<number>(0)
+  const [minROI, setMinROI] = useState<number>(0)
+  const [maxPrice, setMaxPrice] = useState<number>(0)
+  const [selectedMarketplace, setSelectedMarketplace] = useState<string>('all')
+  
   const router = useRouter()
 
   useEffect(() => {
@@ -391,6 +399,65 @@ export default function RecentScansPage() {
   const profitableScans = savedScans.filter(s => s.status === 'completed' && s.opportunities_found > 0).length
   const totalOpportunities = savedScans.reduce((sum, s) => sum + (s.opportunities_found || 0), 0)
 
+  // Function to filter and sort opportunities
+  const getFilteredAndSortedOpportunities = () => {
+    let filtered = opportunities.filter(opp => {
+      // Filter by minimum profit
+      if (minProfit > 0 && opp.bestOpportunity.profit < minProfit) return false
+      
+      // Filter by minimum ROI
+      if (minROI > 0 && opp.bestOpportunity.roi < minROI) return false
+      
+      // Filter by maximum UK price
+      if (maxPrice > 0 && opp.targetPrice > maxPrice) return false
+      
+      // Filter by source marketplace
+      if (selectedMarketplace !== 'all' && opp.bestOpportunity.marketplace !== selectedMarketplace) return false
+      
+      return true
+    })
+
+    // Sort the filtered results
+    filtered.sort((a, b) => {
+      let aValue: number
+      let bValue: number
+
+      switch (sortBy) {
+        case 'profit':
+          aValue = a.bestOpportunity.profit
+          bValue = b.bestOpportunity.profit
+          break
+        case 'roi':
+          aValue = a.bestOpportunity.roi
+          bValue = b.bestOpportunity.roi
+          break
+        case 'profitMargin':
+          aValue = a.bestOpportunity.profitMargin || 0
+          bValue = b.bestOpportunity.profitMargin || 0
+          break
+        case 'targetPrice':
+          aValue = a.targetPrice
+          bValue = b.targetPrice
+          break
+        case 'ukSalesRank':
+          aValue = a.ukSalesRank || 999999
+          bValue = b.ukSalesRank || 999999
+          break
+        default:
+          aValue = a.bestOpportunity.profit
+          bValue = b.bestOpportunity.profit
+      }
+
+      if (sortOrder === 'asc') {
+        return aValue - bValue
+      } else {
+        return bValue - aValue
+      }
+    })
+
+    return filtered
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -467,7 +534,7 @@ export default function RecentScansPage() {
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-lg font-semibold text-gray-900">
-                          {opportunities.length} Arbitrage Opportunities
+                          {getFilteredAndSortedOpportunities().length} Arbitrage Opportunities
                         </h3>
                         <p className="text-sm text-gray-600">
                           Profitable deals found in this scan
@@ -510,8 +577,117 @@ export default function RecentScansPage() {
                     </div>
                   </div>
 
+                  {/* Sorting and Filtering Controls */}
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                      {/* Sort By */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Sort by</label>
+                        <select
+                          value={sortBy}
+                          onChange={(e) => setSortBy(e.target.value as any)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        >
+                          <option value="profit">Profit (£)</option>
+                          <option value="roi">ROI (%)</option>
+                          <option value="profitMargin">Profit Margin (%)</option>
+                          <option value="targetPrice">UK Price (£)</option>
+                          <option value="ukSalesRank">Sales Rank</option>
+                        </select>
+                      </div>
+
+                      {/* Sort Order */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Order</label>
+                        <select
+                          value={sortOrder}
+                          onChange={(e) => setSortOrder(e.target.value as any)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        >
+                          <option value="desc">High to Low</option>
+                          <option value="asc">Low to High</option>
+                        </select>
+                      </div>
+
+                      {/* Min Profit Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Min Profit (£)</label>
+                        <input
+                          type="number"
+                          value={minProfit}
+                          onChange={(e) => setMinProfit(Number(e.target.value))}
+                          placeholder="0"
+                          min="0"
+                          step="0.01"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                      </div>
+
+                      {/* Min ROI Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Min ROI (%)</label>
+                        <input
+                          type="number"
+                          value={minROI}
+                          onChange={(e) => setMinROI(Number(e.target.value))}
+                          placeholder="0"
+                          min="0"
+                          step="0.1"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                      </div>
+
+                      {/* Max Price Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Max UK Price (£)</label>
+                        <input
+                          type="number"
+                          value={maxPrice}
+                          onChange={(e) => setMaxPrice(Number(e.target.value))}
+                          placeholder="No limit"
+                          min="0"
+                          step="0.01"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                      </div>
+
+                      {/* Marketplace Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Source Market</label>
+                        <select
+                          value={selectedMarketplace}
+                          onChange={(e) => setSelectedMarketplace(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        >
+                          <option value="all">All Markets</option>
+                          <option value="DE">Germany</option>
+                          <option value="FR">France</option>
+                          <option value="IT">Italy</option>
+                          <option value="ES">Spain</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Clear Filters Button */}
+                    <div className="mt-4 flex justify-end">
+                      <button
+                        onClick={() => {
+                          setMinProfit(0)
+                          setMinROI(0)
+                          setMaxPrice(0)
+                          setSelectedMarketplace('all')
+                          setSortBy('profit')
+                          setSortOrder('desc')
+                        }}
+                        className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        Clear All Filters
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Opportunities List */}
-                  {opportunities.map((opp, index) => {
+                  {getFilteredAndSortedOpportunities().map((opp, index) => {
                     const isProfitable = opp.bestOpportunity?.profit > 0;
                     
                     return (
