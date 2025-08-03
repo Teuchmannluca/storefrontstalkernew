@@ -202,13 +202,29 @@ export async function POST(request: NextRequest) {
           });
 
           try {
-            // Step 1: Get UK pricing for the entire batch
+            // Step 1: Get UK pricing for this batch
+            sendMessage({ 
+              type: 'progress', 
+              data: { 
+                step: `Fetching UK pricing for batch ${Math.floor(i/batchSize) + 1}...`, 
+                progress: 20 + (i / uniqueProducts.length) * 60 
+              } 
+            });
+            
             const ukPricing = await pricingService.getCompetitivePricing(
               asins,
               MARKETPLACES.UK.id
             );
 
-            // Step 2: Get fees for all products with UK pricing
+            // Step 2: Get fees for products with UK pricing
+            sendMessage({ 
+              type: 'progress', 
+              data: { 
+                step: `Calculating fees for batch ${Math.floor(i/batchSize) + 1}...`, 
+                progress: 20 + ((i + 0.3) / uniqueProducts.length) * 60 
+              } 
+            });
+            
             const productsWithPricing = [];
             for (const product of batch) {
               const ukPriceData = ukPricing.get(product.asin);
@@ -222,7 +238,6 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            // Step 3: Get fees for all products with pricing
             const feesPromises = productsWithPricing.map(async (product) => {
               try {
                 const fees = await pricingService.getFeesEstimate(
@@ -239,7 +254,15 @@ export async function POST(request: NextRequest) {
 
             const feesResults = await Promise.all(feesPromises);
 
-            // Step 4: Get EU pricing for the batch
+            // Step 3: Get EU pricing for this batch
+            sendMessage({ 
+              type: 'progress', 
+              data: { 
+                step: `Fetching EU pricing for batch ${Math.floor(i/batchSize) + 1}...`, 
+                progress: 20 + ((i + 0.6) / uniqueProducts.length) * 60 
+              } 
+            });
+            
             const euPricingPromises = Object.entries(MARKETPLACES).map(async ([country, marketplace]) => {
               if (country === 'UK') return { country, pricing: new Map() };
               
@@ -261,7 +284,15 @@ export async function POST(request: NextRequest) {
               allEuPricing.set(country, pricing);
             });
 
-            // Step 5: Process each product with all data available
+            // Step 4: Process opportunities for this batch immediately
+            sendMessage({ 
+              type: 'progress', 
+              data: { 
+                step: `Analyzing opportunities for batch ${Math.floor(i/batchSize) + 1}...`, 
+                progress: 20 + ((i + 0.9) / uniqueProducts.length) * 60 
+              } 
+            });
+            
             for (const { product, fees } of feesResults) {
               if (!fees) {
                 processedCount++;
@@ -367,12 +398,12 @@ export async function POST(request: NextRequest) {
               processedCount++;
             }
 
-            // Send progress update after processing batch
+            // Send progress update after completing this batch
             const progress = 20 + (processedCount / uniqueProducts.length) * 70;
             sendMessage({ 
               type: 'progress', 
               data: { 
-                step: `Analyzed ${processedCount}/${uniqueProducts.length} unique ASINs, found ${opportunitiesFound} opportunities`, 
+                step: `Completed batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(uniqueProducts.length/batchSize)} - Analyzed ${processedCount}/${uniqueProducts.length} ASINs, found ${opportunitiesFound} opportunities`, 
                 progress 
               } 
             });
