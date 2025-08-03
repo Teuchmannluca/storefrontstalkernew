@@ -1,6 +1,8 @@
-# Project Management Dashboard
+# Amazon Storefront Tracker
 
-A modern project management dashboard built with Next.js, React, and Supabase for authentication and data storage.
+A sophisticated Amazon arbitrage analysis platform built with Next.js, React, and Supabase for authentication and data storage.
+
+**Last Updated: August 3, 2025**
 
 ## Features
 
