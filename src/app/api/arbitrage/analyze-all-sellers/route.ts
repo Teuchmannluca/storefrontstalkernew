@@ -1,8 +1,11 @@
+import 'reflect-metadata';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { SPAPICompetitivePricingClient } from '@/lib/sp-api-competitive-pricing';
-import { SPAPIProductFeesClient } from '@/lib/sp-api-product-fees';
 import { checkEnvVars } from '@/lib/env-check';
+import type { IExternalPricingService } from '@/domain/interfaces/IExternalPricingService';
+import { ResilientPricingAdapter } from '@/infrastructure/external-apis/ResilientPricingAdapter';
+import { ResilientSPAPIClient } from '@/infrastructure/sp-api/ResilientSPAPIClient';
+import { InMemoryCacheService } from '@/infrastructure/cache/InMemoryCacheService';
 
 // Marketplace IDs
 const MARKETPLACES = {
@@ -14,19 +17,6 @@ const MARKETPLACES = {
 };
 
 const EUR_TO_GBP_RATE = 0.86;
-
-// Amazon SP-API Rate Limits
-const RATE_LIMITS = {
-  COMPETITIVE_PRICING: {
-    requestsPerSecond: 10,
-    itemsPerRequest: 20,
-    burstSize: 30
-  },
-  PRODUCT_FEES: {
-    requestsPerSecond: 1,
-    burstSize: 2
-  }
-};
 
 interface StreamMessage {
   type: 'progress' | 'opportunity' | 'complete' | 'error';
@@ -76,6 +66,11 @@ export async function POST(request: NextRequest) {
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // Create pricing service instances
+  const cacheService = new InMemoryCacheService();
+  const spApiClient = new ResilientSPAPIClient(cacheService);
+  const pricingService: IExternalPricingService = new ResilientPricingAdapter(spApiClient);
 
   // Create streaming response
   const stream = new ReadableStream({
@@ -188,425 +183,149 @@ export async function POST(request: NextRequest) {
           } 
         });
 
-        // Initialize SP-API clients
-        const credentials = {
-          accessKeyId: envCheck.values.awsAccessKeyId,
-          secretAccessKey: envCheck.values.awsSecretAccessKey,
-          sessionToken: undefined,
-          region: envCheck.values.awsRegion || 'eu-west-1',
-        };
-        
-        const spApiConfig = {
-          clientId: envCheck.values.amazonAccessKeyId,
-          clientSecret: envCheck.values.amazonSecretAccessKey,
-          refreshToken: envCheck.values.amazonRefreshToken,
-          marketplaceId: MARKETPLACES.UK.id,
-          region: 'eu' as const,
-        };
-
-        const pricingClient = new SPAPICompetitivePricingClient(credentials, spApiConfig);
-        const feesClient = new SPAPIProductFeesClient(credentials, spApiConfig);
-
-        // Process unique products in batches
-        const batchSize = Math.min(20, uniqueProducts.length > 100 ? 10 : 15);
-        
-        // Rate limiter helper
-        let lastPricingRequest = Date.now();
-        let lastFeesRequest = Date.now();
-        const pricingMinInterval = 1000 / RATE_LIMITS.COMPETITIVE_PRICING.requestsPerSecond; // 100ms
-        const feesMinInterval = 1000 / RATE_LIMITS.PRODUCT_FEES.requestsPerSecond; // 1000ms
+        // Process unique products one by one for live updates
         let processedCount = 0;
         let opportunitiesFound = 0;
+        const totalProducts = uniqueProducts.length;
 
-        for (let i = 0; i < uniqueProducts.length; i += batchSize) {
-          const batch = uniqueProducts.slice(i, i + batchSize);
-          const asins = batch.map(p => p.asin);
+        // Process each product individually for better streaming updates
+        for (const product of uniqueProducts) {
+          const asin = product.asin;
           
+          // Update progress for each product
+          processedCount++;
           sendMessage({ 
             type: 'progress', 
             data: { 
-              step: `Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(uniqueProducts.length/batchSize)}...`, 
-              progress: 20 + (i / uniqueProducts.length) * 60 
+              step: `Analyzing ${processedCount}/${totalProducts} ASINs...`, 
+              progress: 20 + (processedCount / totalProducts) * 70 
             } 
           });
 
           try {
-            // Fetch pricing for all marketplaces with proper rate limiting
-            const pricingPromises = Object.entries(MARKETPLACES).map(async ([country, marketplace], index) => {
-              // Stagger requests to avoid burst limits
-              if (index > 0) {
-                await new Promise(resolve => setTimeout(resolve, index * pricingMinInterval));
-              }
-              
-              try {
-                // Ensure minimum interval between pricing requests
-                const now = Date.now();
-                const timeSinceLastRequest = now - lastPricingRequest;
-                if (timeSinceLastRequest < pricingMinInterval) {
-                  await new Promise(resolve => setTimeout(resolve, pricingMinInterval - timeSinceLastRequest));
-                }
-                lastPricingRequest = Date.now();
-                
-                const pricing = await pricingClient.getCompetitivePricing(
-                  asins,
-                  marketplace.id,
-                  'Asin',
-                  'Consumer'
-                );
-                return { country, pricing };
-              } catch (error: any) {
-                if (error.message?.includes('429') || error.message?.includes('TooManyRequests')) {
-                  console.log(`Rate limited for ${country} pricing, waiting 2s...`);
-                  await new Promise(resolve => setTimeout(resolve, 2000));
-                  // Retry once
-                  try {
-                    const pricing = await pricingClient.getCompetitivePricing(
-                      asins,
-                      marketplace.id,
-                      'Asin',
-                      'Consumer'
-                    );
-                    return { country, pricing };
-                  } catch (retryError) {
-                    console.error(`Retry failed for ${country}:`, retryError);
-                    return { country, pricing: [] };
-                  }
-                }
-                console.error(`Error fetching pricing for ${country}:`, error);
-                return { country, pricing: [] };
-              }
-            });
-
-            const allPricing = await Promise.all(pricingPromises);
-            
-            // Organize pricing data by ASIN
-            const pricingByAsin = new Map<string, any>();
-            
-            allPricing.forEach(({ country, pricing }) => {
-              pricing.forEach((product: any) => {
-                const asin = product.asin;
-                if (!pricingByAsin.has(asin)) {
-                  pricingByAsin.set(asin, {});
-                }
-                
-                let priceData = product.competitivePricing?.CompetitivePrices?.find(
-                  (cp: any) => cp.CompetitivePriceId === '1'
-                );
-                
-                if (!priceData && product.competitivePricing?.CompetitivePrices?.length > 0) {
-                  priceData = product.competitivePricing.CompetitivePrices[0];
-                }
-                
-                if (priceData && priceData.Price) {
-                  pricingByAsin.get(asin)[country] = {
-                    price: priceData.Price.ListingPrice?.Amount || priceData.Price.LandedPrice?.Amount,
-                    currency: priceData.Price.ListingPrice?.CurrencyCode,
-                    numberOfOffers: product.competitivePricing?.NumberOfOfferListings?.find(
-                      (l: any) => l.condition === 'New'
-                    )?.Count || 0,
-                    salesRankings: product.salesRankings
-                  };
-                }
-              });
-            });
-
-            // Process each ASIN in this batch
-            const pricingEntries = Array.from(pricingByAsin.entries());
-            for (const [asin, marketplacePrices] of pricingEntries) {
-              const product = uniqueProducts.find(p => p.asin === asin);
-              
-              if (!product || !marketplacePrices.UK) {
-                processedCount++;
-                continue;
-              }
-
-              const ukPrice = marketplacePrices.UK.price;
-              const ukCompetitors = marketplacePrices.UK.numberOfOffers;
-              // Use sales rank from SP-API data
-              const ukSalesRank = marketplacePrices.UK.salesRankings?.[0]?.rank || 0;
-              const salesPerMonth = 0; // Sales per month data not available
-
-              try {
-                // Ensure minimum interval between fees requests (1 request per second)
-                const now = Date.now();
-                const timeSinceLastFeesRequest = now - lastFeesRequest;
-                if (timeSinceLastFeesRequest < feesMinInterval) {
-                  await new Promise(resolve => setTimeout(resolve, feesMinInterval - timeSinceLastFeesRequest));
-                }
-                lastFeesRequest = Date.now();
-                
-                // Calculate fees with rate limiting protection
-                const feesEstimate = await feesClient.getMyFeesEstimateForASIN(
-                  asin,
-                  {
-                    listingPrice: {
-                      currencyCode: 'GBP',
-                      amount: ukPrice
-                    }
-                  },
-                  MARKETPLACES.UK.id
-                );
-
-                if (feesEstimate.status === 'Success' && feesEstimate.feesEstimate) {
-                  const fees = feesEstimate.feesEstimate;
-                  const feeDetails = fees.feeDetailList || [];
-                  
-                  const referralFee = feeDetails.find(f => f.feeType === 'ReferralFee')?.finalFee.amount || 0;
-                  const amazonFees = fees.totalFeesEstimate?.amount || 0;
-                  const digitalServicesFee = amazonFees * 0.02; // 2% of Amazon fees
-
-                  // Check EU prices
-                  const euPrices: any[] = [];
-                  let bestOpportunity: any = null;
-
-                  for (const [country, data] of Object.entries(marketplacePrices)) {
-                    if (country === 'UK' || !data) continue;
-                    
-                    const priceData = data as any;
-                    const sourcePrice = priceData.price;
-                    const sourcePriceGBP = priceData.currency === 'EUR' 
-                      ? sourcePrice * EUR_TO_GBP_RATE 
-                      : sourcePrice;
-
-                    const totalCost = sourcePriceGBP + amazonFees + digitalServicesFee;
-                    const profit = ukPrice - totalCost;
-                    const roi = (profit / sourcePriceGBP) * 100;
-
-                    const marketplacePrice = {
-                      marketplace: country,
-                      sourcePrice,
-                      sourcePriceGBP,
-                      profit,
-                      roi,
-                      totalCost
-                    };
-
-                    euPrices.push(marketplacePrice);
-
-                    if (profit > 0 && (!bestOpportunity || roi > bestOpportunity.roi)) {
-                      bestOpportunity = marketplacePrice;
-                    }
-                  }
-
-                  // If profitable, save and send opportunity
-                  if (bestOpportunity && bestOpportunity.profit > 0) {
-                    opportunitiesFound++;
-                    
-                    // Save opportunity to database
-                    if (scanId) {
-                      await supabase
-                        .from('arbitrage_opportunities')
-                        .insert({
-                          scan_id: scanId,
-                          asin,
-                          product_name: product.product_name,
-                          product_image: product.image_link,
-                          target_price: ukPrice,
-                          amazon_fees: amazonFees,
-                          referral_fee: referralFee,
-                          digital_services_fee: digitalServicesFee,
-                          uk_competitors: ukCompetitors,
-                          uk_sales_rank: ukSalesRank,
-                          sales_per_month: salesPerMonth,
-                          best_source_marketplace: bestOpportunity.marketplace,
-                          best_source_price: bestOpportunity.sourcePrice,
-                          best_source_price_gbp: bestOpportunity.sourcePriceGBP,
-                          best_profit: bestOpportunity.profit,
-                          best_roi: bestOpportunity.roi,
-                          all_marketplace_prices: { euPrices },
-                          storefronts: product.storefronts
-                        });
-                    }
-                    
-                    const opportunity = {
-                      asin,
-                      productName: product.product_name,
-                      productImage: product.image_link,
-                      targetPrice: ukPrice,
-                      amazonFees,
-                      referralFee,
-                      digitalServicesFee,
-                      ukCompetitors,
-                      ukSalesRank,
-                      salesPerMonth,
-                      euPrices: euPrices.sort((a, b) => b.roi - a.roi),
-                      bestOpportunity,
-                      storefronts: product.storefronts // Include which storefronts have this ASIN
-                    };
-
-                    sendMessage({ 
-                      type: 'opportunity', 
-                      data: opportunity 
-                    });
-                  }
-                }
-              } catch (feeError: any) {
-                // Handle rate limiting with proper retry
-                if (feeError.message?.includes('429') || feeError.message?.includes('QuotaExceeded') || feeError.message?.includes('TooManyRequests')) {
-                  console.log(`Rate limited for ${asin} fees, waiting 5s before retry...`);
-                  await new Promise(resolve => setTimeout(resolve, 5000));
-                  
-                  // Retry once with backoff
-                  try {
-                    // Wait again to ensure we respect rate limit
-                    const now = Date.now();
-                    const timeSinceLastFeesRequest = now - lastFeesRequest;
-                    if (timeSinceLastFeesRequest < feesMinInterval) {
-                      await new Promise(resolve => setTimeout(resolve, feesMinInterval - timeSinceLastFeesRequest));
-                    }
-                    lastFeesRequest = Date.now();
-                    
-                    const retryFeesEstimate = await feesClient.getMyFeesEstimateForASIN(
-                      asin,
-                      {
-                        listingPrice: {
-                          currencyCode: 'GBP',
-                          amount: ukPrice
-                        }
-                      },
-                      MARKETPLACES.UK.id
-                    );
-                    
-                    // Process retry result (same logic as above)
-                    if (retryFeesEstimate.status === 'Success' && retryFeesEstimate.feesEstimate) {
-                      const fees = retryFeesEstimate.feesEstimate;
-                      const feeDetails = fees.feeDetailList || [];
-                      
-                      const referralFee = feeDetails.find(f => f.feeType === 'ReferralFee')?.finalFee.amount || 0;
-                      const amazonFees = fees.totalFeesEstimate?.amount || 0;
-                      const digitalServicesFee = amazonFees * 0.02; // 2% of Amazon fees
-
-                      // Process EU prices
-                      const euPrices: any[] = [];
-                      let bestOpportunity: any = null;
-
-                      for (const [country, data] of Object.entries(marketplacePrices)) {
-                        if (country === 'UK' || !data) continue;
-                        
-                        const priceData = data as any;
-                        const sourcePrice = priceData.price;
-                        const sourcePriceGBP = priceData.currency === 'EUR' 
-                          ? sourcePrice * EUR_TO_GBP_RATE 
-                          : sourcePrice;
-
-                        const totalCost = sourcePriceGBP + amazonFees + digitalServicesFee;
-                        const profit = ukPrice - totalCost;
-                        const roi = (profit / sourcePriceGBP) * 100;
-
-                        const marketplacePrice = {
-                          marketplace: country,
-                          sourcePrice,
-                          sourcePriceGBP,
-                          profit,
-                          roi,
-                          totalCost
-                        };
-
-                        euPrices.push(marketplacePrice);
-
-                        if (profit > 0 && (!bestOpportunity || roi > bestOpportunity.roi)) {
-                          bestOpportunity = marketplacePrice;
-                        }
-                      }
-
-                      // If profitable, save and send opportunity
-                      if (bestOpportunity && bestOpportunity.profit > 0) {
-                        opportunitiesFound++;
-                        
-                        // Save opportunity to database
-                        if (scanId) {
-                          await supabase
-                            .from('arbitrage_opportunities')
-                            .insert({
-                              scan_id: scanId,
-                              asin,
-                              product_name: product.product_name,
-                              product_image: product.image_link,
-                              target_price: ukPrice,
-                              amazon_fees: amazonFees,
-                              referral_fee: referralFee,
-                              digital_services_fee: digitalServicesFee,
-                              uk_competitors: ukCompetitors,
-                              uk_sales_rank: ukSalesRank,
-                              sales_per_month: salesPerMonth,
-                              best_source_marketplace: bestOpportunity.marketplace,
-                              best_source_price: bestOpportunity.sourcePrice,
-                              best_source_price_gbp: bestOpportunity.sourcePriceGBP,
-                              best_profit: bestOpportunity.profit,
-                              best_roi: bestOpportunity.roi,
-                              all_marketplace_prices: { euPrices },
-                              storefronts: product.storefronts
-                            });
-                        }
-                        
-                        const opportunity = {
-                          asin,
-                          productName: product.product_name,
-                          productImage: product.image_link,
-                          targetPrice: ukPrice,
-                          amazonFees,
-                          referralFee,
-                          digitalServicesFee,
-                          ukCompetitors,
-                          ukSalesRank,
-                          salesPerMonth,
-                          euPrices: euPrices.sort((a, b) => b.roi - a.roi),
-                          bestOpportunity,
-                          storefronts: product.storefronts
-                        };
-
-                        sendMessage({ 
-                          type: 'opportunity', 
-                          data: opportunity 
-                        });
-                      }
-                    }
-                  } catch (retryError) {
-                    console.log(`Retry failed for ${asin}, skipping...`);
-                  }
-                } else {
-                  console.error(`Fee calculation error for ${asin}:`, feeError);
-                }
-              }
-
-              processedCount++;
-              
-              // Update progress every 5 products for smooth updates
-              if (processedCount % 5 === 0 || processedCount === uniqueProducts.length) {
-                const progress = 20 + (processedCount / uniqueProducts.length) * 70;
-                sendMessage({ 
-                  type: 'progress', 
-                  data: { 
-                    step: `Analyzed ${processedCount}/${uniqueProducts.length} unique ASINs, found ${opportunitiesFound} opportunities`, 
-                    progress 
-                  } 
-                });
-              }
-            }
-
-            // Smart delay between batches
-            const batchEndTime = Date.now();
-            const batchStartTime = batchEndTime - (batch.length * feesMinInterval);
-            const batchDuration = batchEndTime - batchStartTime;
-            
-            const minBatchDuration = Math.max(
-              batch.length * feesMinInterval,
-              (Object.keys(MARKETPLACES).length * pricingMinInterval)
+            // First get UK pricing
+            const ukPricing = await pricingService.getCompetitivePricing(
+              [asin],
+              MARKETPLACES.UK.id
             );
             
-            if (batchDuration < minBatchDuration) {
-              const additionalDelay = minBatchDuration - batchDuration;
-              console.log(`Batch processed in ${batchDuration}ms, adding ${additionalDelay}ms delay`);
-              await new Promise(resolve => setTimeout(resolve, additionalDelay));
-            }
-            
-            // Extra safety margin for large datasets
-            if (uniqueProducts.length > 200) {
-              await new Promise(resolve => setTimeout(resolve, 1000));
+            const ukPriceData = ukPricing.get(asin);
+            if (!ukPriceData || !ukPriceData.price) {
+              continue;
             }
 
-          } catch (batchError) {
-            console.error('Batch processing error:', batchError);
+            const ukPrice = ukPriceData.price;
+            const ukCompetitors = ukPriceData.numberOfOffers || 0;
+            const ukSalesRank = ukPriceData.salesRankings?.[0]?.rank || 0;
+            const salesPerMonth = 0; // Sales per month data not available
+
+            // Calculate fees
+            const feesEstimate = await pricingService.getFeesEstimate(
+              asin,
+              ukPrice,
+              MARKETPLACES.UK.id
+            );
+
+            const referralFee = feesEstimate.referralFee || 0;
+            const amazonFees = feesEstimate.totalFees || 0;
+            const digitalServicesFee = amazonFees * 0.02; // 2% of Amazon fees
+
+            // Now fetch EU prices
+            const euPrices: any[] = [];
+            let bestOpportunity: any = null;
+
+            for (const [country, marketplace] of Object.entries(MARKETPLACES)) {
+              if (country === 'UK') continue;
+              
+              // Fetch pricing for this marketplace
+              const marketplacePricing = await pricingService.getCompetitivePricing(
+                [asin],
+                marketplace.id
+              );
+              
+              const countryPricing = marketplacePricing.get(asin);
+              if (!countryPricing || !countryPricing.price) continue;
+              
+              const sourcePrice = countryPricing.price;
+              const sourcePriceGBP = countryPricing.currency === 'EUR' 
+                ? sourcePrice * EUR_TO_GBP_RATE 
+                : sourcePrice;
+
+              const totalCost = sourcePriceGBP + amazonFees + digitalServicesFee;
+              const profit = ukPrice - totalCost;
+              const roi = (profit / sourcePriceGBP) * 100;
+
+              const marketplacePrice = {
+                marketplace: country,
+                sourcePrice,
+                sourcePriceGBP,
+                profit,
+                roi,
+                totalCost
+              };
+
+              euPrices.push(marketplacePrice);
+
+              if (profit > 0 && (!bestOpportunity || roi > bestOpportunity.roi)) {
+                bestOpportunity = marketplacePrice;
+              }
+            }
+
+            // If profitable, save and send opportunity
+            if (bestOpportunity && bestOpportunity.profit > 0) {
+              opportunitiesFound++;
+              
+              // Save opportunity to database
+              if (scanId) {
+                await supabase
+                  .from('arbitrage_opportunities')
+                  .insert({
+                    scan_id: scanId,
+                    asin,
+                    product_name: product.product_name,
+                    product_image: product.image_link,
+                    target_price: ukPrice,
+                    amazon_fees: amazonFees,
+                    referral_fee: referralFee,
+                    digital_services_fee: digitalServicesFee,
+                    uk_competitors: ukCompetitors,
+                    uk_sales_rank: ukSalesRank,
+                    sales_per_month: salesPerMonth,
+                    best_source_marketplace: bestOpportunity.marketplace,
+                    best_source_price: bestOpportunity.sourcePrice,
+                    best_source_price_gbp: bestOpportunity.sourcePriceGBP,
+                    best_profit: bestOpportunity.profit,
+                    best_roi: bestOpportunity.roi,
+                    all_marketplace_prices: { euPrices },
+                    storefronts: product.storefronts
+                  });
+              }
+              
+              const opportunity = {
+                asin,
+                productName: product.product_name,
+                productImage: product.image_link,
+                targetPrice: ukPrice,
+                amazonFees,
+                referralFee,
+                digitalServicesFee,
+                ukCompetitors,
+                ukSalesRank,
+                salesPerMonth,
+                euPrices: euPrices.sort((a, b) => b.roi - a.roi),
+                bestOpportunity,
+                storefronts: product.storefronts // Include which storefronts have this ASIN
+              };
+
+              sendMessage({ 
+                type: 'opportunity', 
+                data: opportunity 
+              });
+            }
+
+          } catch (error: any) {
+            console.error(`Error processing ${asin}:`, error.message);
+            // Continue with next ASIN
           }
         }
 

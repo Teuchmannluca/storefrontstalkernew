@@ -136,28 +136,28 @@ export class ResilientSPAPIClient {
       return cached;
     }
 
+    // Determine currency based on marketplace
+    const currency = marketplaceId === 'A1F83G8C2ARO7P' ? 'GBP' : 'EUR'; // UK uses GBP
+
     try {
       const result = await this.rateLimiter.executeWithRetry(
         'getMyFeesEstimate',
         async () => {
-          return await this.productFeesClient.getMyFeesEstimates(
-            [{
-              idType: 'ASIN' as const,
-              idValue: asin,
-              priceToEstimateFees: {
-                listingPrice: {
-                  amount: price,
-                  currencyCode: 'EUR'
-                }
-              },
-              marketplaceId
-            }]
+          return await this.productFeesClient.getMyFeesEstimateForASIN(
+            asin,
+            {
+              listingPrice: {
+                currencyCode: currency,
+                amount: price
+              }
+            },
+            marketplaceId
           );
         }
       );
 
-      // Extract the first result from batch response
-      const feeEstimate = result[0];
+      // Use the result directly (not array)
+      const feeEstimate = result;
       
       if (!feeEstimate || !feeEstimate.feesEstimate) {
         throw new Error('No fees estimate available');
@@ -174,10 +174,18 @@ export class ResilientSPAPIClient {
       
       if (feeEstimate.feesEstimate.feeDetailList) {
         for (const fee of feeEstimate.feesEstimate.feeDetailList) {
-          if (fee.feeType === 'ReferralFee') {
-            referralFee = fee.feeAmount.amount || 0;
-          } else if (fee.feeType === 'FBAFees' || fee.feeType === 'FulfillmentFees') {
-            fbaFee += fee.feeAmount.amount || 0;
+          const feeAmount = fee.finalFee?.amount || fee.feeAmount?.amount || 0;
+          
+          switch (fee.feeType) {
+            case 'ReferralFee':
+              referralFee = feeAmount;
+              break;
+            case 'FBAFees':
+            case 'FulfillmentFees':
+            case 'FBAPerUnitFulfillmentFee':
+            case 'FBAPerOrderFulfillmentFee':
+              fbaFee += feeAmount;
+              break;
           }
         }
       }

@@ -58,7 +58,7 @@ export class ResilientPricingAdapter implements IExternalPricingService {
       
       // Return estimated fees as fallback
       const referralFee = price * 0.15;  // 15% estimated
-      const fbaFee = 3;                   // €3 estimated
+      const fbaFee = marketplaceId === 'A1F83G8C2ARO7P' ? 3 : 3;  // £3 for UK, €3 for EU
       
       return {
         referralFee,
