@@ -1,6 +1,7 @@
 {
   "framework": "nextjs",
   "regions": ["cdg1"],
+  "buildCommand": "npm run build",
   "functions": {
     "src/app/api/arbitrage/analyze-stream/route.ts": {
       "maxDuration": 300
