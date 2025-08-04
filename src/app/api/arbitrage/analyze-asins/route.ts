@@ -301,7 +301,7 @@ export async function POST(request: NextRequest) {
               for (const product of ukPricingBatch) {
                 if (product.asin) {
                   // SP-API returns CompetitivePrices array with PascalCase structure
-                  const competitivePrices = product.competitivePricing?.CompetitivePrices || [];
+                  const competitivePrices = (product.competitivePricing as any)?.CompetitivePrices || [];
                   
                   // IMPORTANT: Filter out USED products - only consider NEW condition
                   const newConditionPrices = competitivePrices.filter(
@@ -332,7 +332,7 @@ export async function POST(request: NextRequest) {
                           price: price,
                           currency: currency,
                           priceType: buyBoxPrice ? 'buy_box' : (featuredPrice ? 'featured_offer' : 'first_available'),
-                          numberOfOffers: product.competitivePricing?.NumberOfOfferListings?.find(
+                          numberOfOffers: (product.competitivePricing as any)?.NumberOfOfferListings?.find(
                             (l: any) => l.condition === 'New'
                           )?.Count || 0,
                           salesRankings: product.salesRankings
@@ -466,7 +466,7 @@ export async function POST(request: NextRequest) {
                   if (euPricing && euPricing.length > 0) {
                     const product = euPricing[0];
                     // SP-API returns CompetitivePrices array with PascalCase structure
-                    const competitivePrices = product.competitivePricing?.CompetitivePrices || [];
+                    const competitivePrices = (product.competitivePricing as any)?.CompetitivePrices || [];
                     
                     // Filter for NEW condition only
                     const newConditionPrices = competitivePrices.filter(
@@ -512,7 +512,7 @@ export async function POST(request: NextRequest) {
                       
                       if (euPricing && euPricing.length > 0) {
                         const product = euPricing[0];
-                        const competitivePrices = product.competitivePricing?.CompetitivePrices || [];
+                        const competitivePrices = (product.competitivePricing as any)?.CompetitivePrices || [];
                         const newConditionPrices = competitivePrices.filter(
                           (cp: any) => cp.condition === 'New' || cp.condition === 'new' || !cp.condition
                         );
