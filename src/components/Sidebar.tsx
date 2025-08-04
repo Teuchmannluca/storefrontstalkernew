@@ -12,7 +12,8 @@ import {
   GlobeEuropeAfricaIcon,
   MagnifyingGlassIcon,
   ClockIcon,
-  NoSymbolIcon
+  NoSymbolIcon,
+  ShoppingBagIcon
 } from '@heroicons/react/24/outline'
 import { 
   HomeIcon as HomeIconSolid,
@@ -21,7 +22,8 @@ import {
   GlobeEuropeAfricaIcon as GlobeEuropeAfricaIconSolid,
   MagnifyingGlassIcon as MagnifyingGlassIconSolid,
   ClockIcon as ClockIconSolid,
-  NoSymbolIcon as NoSymbolIconSolid
+  NoSymbolIcon as NoSymbolIconSolid,
+  ShoppingBagIcon as ShoppingBagIconSolid
 } from '@heroicons/react/24/solid'
 
 interface SidebarProps {
@@ -35,6 +37,7 @@ const navigation = [
   { name: 'All Products', href: '/dashboard/products', icon: CubeIcon, iconActive: CubeIconSolid },
   { name: 'A2A EU', href: '/dashboard/a2a-eu', icon: GlobeEuropeAfricaIcon, iconActive: GlobeEuropeAfricaIconSolid },
   { name: 'Recent Scans', href: '/dashboard/recent-scans', icon: ClockIcon, iconActive: ClockIconSolid },
+  { name: 'Sourcing Lists', href: '/dashboard/sourcing-lists', icon: ShoppingBagIcon, iconActive: ShoppingBagIconSolid },
   { name: 'ASIN Checker', href: '/dashboard/asin-checker', icon: MagnifyingGlassIcon, iconActive: MagnifyingGlassIconSolid },
   { name: 'Blacklist', href: '/dashboard/blacklist', icon: NoSymbolIcon, iconActive: NoSymbolIconSolid },
 ]
