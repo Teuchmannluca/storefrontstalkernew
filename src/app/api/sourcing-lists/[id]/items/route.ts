@@ -6,10 +6,11 @@ import { checkEnvVars } from '@/lib/env-check'
 // GET - Get items in a sourcing list
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await validateApiRequest(request)
+    const { id } = await params
     
     const envCheck = checkEnvVars({
       supabase: { url: true, serviceKey: true }
@@ -31,7 +32,7 @@ export async function GET(
     const { data: list, error: listError } = await supabase
       .from('sourcing_lists')
       .select('id')
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('user_id', user.id)
       .single()
 
@@ -46,7 +47,7 @@ export async function GET(
     const { data: items, error } = await supabase
       .from('sourcing_list_items')
       .select('*')
-      .eq('sourcing_list_id', params.id)
+      .eq('sourcing_list_id', id)
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -74,10 +75,11 @@ export async function GET(
 // DELETE - Remove item from sourcing list
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await validateApiRequest(request)
+    const { id } = await params
     
     const envCheck = checkEnvVars({
       supabase: { url: true, serviceKey: true }
@@ -113,10 +115,10 @@ export async function DELETE(
         sourcing_lists!inner(user_id)
       `)
       .eq('id', item_id)
-      .eq('sourcing_list_id', params.id)
+      .eq('sourcing_list_id', id)
       .single()
 
-    if (itemError || !item || item.sourcing_lists.user_id !== user.id) {
+    if (itemError || !item || (item.sourcing_lists as any).user_id !== user.id) {
       return NextResponse.json(
         { error: 'Item not found or access denied' },
         { status: 404 }
@@ -128,7 +130,7 @@ export async function DELETE(
       .from('sourcing_list_items')
       .delete()
       .eq('id', item_id)
-      .eq('sourcing_list_id', params.id)
+      .eq('sourcing_list_id', id)
 
     if (error) {
       console.error('Error deleting sourcing list item:', error)

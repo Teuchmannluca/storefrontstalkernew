@@ -6,10 +6,11 @@ import { checkEnvVars } from '@/lib/env-check'
 // GET - Get single sourcing list
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await validateApiRequest(request)
+    const { id } = await params
     
     const envCheck = checkEnvVars({
       supabase: { url: true, serviceKey: true }
@@ -30,7 +31,7 @@ export async function GET(
     const { data: list, error } = await supabase
       .from('sourcing_lists')
       .select('*')
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('user_id', user.id)
       .single()
 
@@ -59,10 +60,11 @@ export async function GET(
 // PATCH - Update sourcing list
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await validateApiRequest(request)
+    const { id } = await params
     
     const envCheck = checkEnvVars({
       supabase: { url: true, serviceKey: true }
@@ -110,7 +112,7 @@ export async function PATCH(
     const { data: existingList, error: checkError } = await supabase
       .from('sourcing_lists')
       .select('id')
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('user_id', user.id)
       .single()
 
@@ -125,7 +127,7 @@ export async function PATCH(
     const { data: updatedList, error } = await supabase
       .from('sourcing_lists')
       .update(updateData)
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('user_id', user.id)
       .select()
       .single()
@@ -155,10 +157,11 @@ export async function PATCH(
 // DELETE - Delete sourcing list
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await validateApiRequest(request)
+    const { id } = await params
     
     const envCheck = checkEnvVars({
       supabase: { url: true, serviceKey: true }
@@ -180,7 +183,7 @@ export async function DELETE(
     const { data: existingList, error: checkError } = await supabase
       .from('sourcing_lists')
       .select('id')
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('user_id', user.id)
       .single()
 
@@ -195,7 +198,7 @@ export async function DELETE(
     const { error } = await supabase
       .from('sourcing_lists')
       .delete()
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('user_id', user.id)
 
     if (error) {
