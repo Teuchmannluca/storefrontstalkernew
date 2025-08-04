@@ -135,53 +135,24 @@ export async function POST(request: NextRequest) {
 
         sendMessage({ 
           type: 'progress', 
-          data: { step: `Found ${storefronts.length} storefronts. Collecting all products...`, progress: 5, scanId } 
+          data: { step: `Found ${storefronts.length} storefronts. Fetching products...`, progress: 5, scanId } 
         });
 
-        // Fetch ALL products from ALL storefronts - use regular join to ensure complete coverage
-        console.log(`Fetching products from ${storefronts.length} storefronts:`, storefronts.map(s => s.name));
+        // Fetch all products from all storefronts
         const { data: allProducts, error: productsError } = await supabase
           .from('products')
-          .select(`
-            *,
-            storefronts (
-              id,
-              name,
-              seller_id
-            )
-          `)
+          .select('*, storefronts!inner(id, name, seller_id)')
           .in('storefront_id', storefronts.map(s => s.id))
           .order('asin');
 
-        console.log(`Query result: ${allProducts?.length || 0} products found`);
-
-        if (productsError) {
-          console.error('Products query error:', productsError);
-          sendMessage({ type: 'error', data: { error: `Failed to fetch products: ${productsError.message}` } });
+        if (productsError || !allProducts || allProducts.length === 0) {
+          sendMessage({ type: 'error', data: { error: 'No products found across storefronts' } });
           return;
-        }
-
-        if (!allProducts || allProducts.length === 0) {
-          sendMessage({ type: 'error', data: { error: 'No products found across storefronts. Please sync your storefronts first.' } });
-          return;
-        }
-
-        // Add validation: check which storefronts have products
-        const storefrontsWithProducts = new Set(allProducts.map(p => p.storefront_id));
-        const emptyStorefronts = storefronts.filter(s => !storefrontsWithProducts.has(s.id));
-        
-        if (emptyStorefronts.length > 0) {
-          console.log(`Warning: ${emptyStorefronts.length} storefronts have no products:`, emptyStorefronts.map(s => s.name));
         }
 
         sendMessage({ 
           type: 'progress', 
-          data: { 
-            step: `Found ${allProducts.length} total products from ${storefronts.length} storefronts. Deduplicating ASINs...`, 
-            progress: 8,
-            totalProducts: allProducts.length,
-            storefrontsCount: storefronts.length
-          } 
+          data: { step: `Found ${allProducts.length} total products. Deduplicating ASINs...`, progress: 10 } 
         });
 
         // Deduplicate ASINs and track which storefronts have each ASIN
@@ -189,11 +160,6 @@ export async function POST(request: NextRequest) {
         
         for (const product of allProducts) {
           const storefront = product.storefronts;
-          
-          if (!storefront) {
-            console.warn(`Product ${product.asin} has no storefront data, skipping`);
-            continue;
-          }
           
           if (uniqueProductsMap.has(product.asin)) {
             // Add this storefront to the existing ASIN
@@ -222,15 +188,11 @@ export async function POST(request: NextRequest) {
 
         const uniqueProducts = Array.from(uniqueProductsMap.values());
         
-        console.log(`Deduplication complete: ${allProducts.length} total products -> ${uniqueProducts.length} unique ASINs`);
-        
         sendMessage({ 
           type: 'progress', 
           data: { 
-            step: `Identified ${uniqueProducts.length} unique ASINs across all storefronts. Applying blacklist filter...`, 
-            progress: 12,
-            uniqueAsins: uniqueProducts.length,
-            totalProducts: allProducts.length
+            step: `Found ${uniqueProducts.length} unique ASINs. Checking blacklist...`, 
+            progress: 13 
           } 
         });
 
@@ -240,37 +202,20 @@ export async function POST(request: NextRequest) {
           envCheck.values.supabaseServiceKey
         );
         
-        console.log('Loading user blacklist...');
         const blacklistedAsins = await blacklistService.getBlacklistedAsins(user.id);
-        console.log(`User has ${blacklistedAsins.size} blacklisted ASINs`);
-        
         const { filteredProducts, excludedCount } = blacklistService.filterBlacklistedProducts(
           uniqueProducts,
           blacklistedAsins
         );
 
-        console.log(`Blacklist filtering: ${uniqueProducts.length} ASINs -> ${excludedCount} excluded -> ${filteredProducts.length} remaining`);
-
         if (excludedCount > 0) {
           sendMessage({ 
             type: 'progress', 
             data: { 
-              step: `Blacklist applied: Excluded ${excludedCount} blacklisted ASINs. Analyzing ${filteredProducts.length} ASINs for arbitrage opportunities...`, 
-              progress: 15,
+              step: `Excluded ${excludedCount} blacklisted ASINs. Proceeding with ${filteredProducts.length} unique ASINs...`, 
+              progress: 14,
               excludedCount,
-              blacklistedCount: blacklistedAsins.size,
-              finalAsinCount: filteredProducts.length
-            } 
-          });
-        } else {
-          sendMessage({ 
-            type: 'progress', 
-            data: { 
-              step: `No blacklisted ASINs found. Analyzing all ${filteredProducts.length} unique ASINs for arbitrage opportunities...`, 
-              progress: 15,
-              excludedCount: 0,
-              blacklistedCount: blacklistedAsins.size,
-              finalAsinCount: filteredProducts.length
+              blacklistedCount: blacklistedAsins.size
             } 
           });
         }
@@ -411,21 +356,21 @@ export async function POST(request: NextRequest) {
                   pricingByAsin.set(asin, {});
                 }
                 
-                let priceData = product.competitivePricing?.competitivePrices?.find(
-                  (cp: any) => cp.competitivePriceId === '1'
+                let priceData = product.competitivePricing?.CompetitivePrices?.find(
+                  (cp: any) => cp.CompetitivePriceId === '1'
                 );
                 
-                if (!priceData && product.competitivePricing?.competitivePrices?.length > 0) {
-                  priceData = product.competitivePricing.competitivePrices[0];
+                if (!priceData && product.competitivePricing?.CompetitivePrices?.length > 0) {
+                  priceData = product.competitivePricing.CompetitivePrices[0];
                 }
                 
-                if (priceData && priceData.price) {
+                if (priceData && priceData.Price) {
                   pricingByAsin.get(asin)[country] = {
-                    price: priceData.price.amount,
-                    currency: priceData.price.currencyCode,
-                    numberOfOffers: product.competitivePricing?.numberOfOfferListings?.find(
+                    price: priceData.Price.ListingPrice?.Amount || priceData.Price.LandedPrice?.Amount,
+                    currency: priceData.Price.ListingPrice?.CurrencyCode,
+                    numberOfOffers: product.competitivePricing?.NumberOfOfferListings?.find(
                       (l: any) => l.condition === 'New'
-                    )?.count || 0,
+                    )?.Count || 0,
                     salesRankings: product.salesRankings
                   };
                 }

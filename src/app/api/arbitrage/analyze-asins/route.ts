@@ -248,13 +248,117 @@ export async function POST(request: NextRequest) {
           let lastPricingRequest = Date.now();
           let lastFeesRequest = Date.now();
           const catalogMinInterval = 500; // 2 requests per second
-          const pricingMinInterval = 100; // 10 requests per second (but we'll be conservative)
+          const pricingMinInterval = 2000; // 2 seconds between batches to avoid rate limits
           const feesMinInterval = 1000; // 1 request per second
           
           let processedCount = 0;
           let opportunitiesFound = 0;
 
-          // Process ASINs one by one
+          // First, batch process UK pricing for all ASINs
+          const batchSize = 10;
+          const ukPricingData = new Map<string, any>();
+          
+          sendMessage({ 
+            type: 'progress', 
+            data: { 
+              step: `Fetching UK pricing data in batches...`, 
+              progress: 15,
+              totalAsins: finalAsins.length
+            } 
+          });
+
+          // Process UK pricing in batches
+          for (let batchStart = 0; batchStart < finalAsins.length; batchStart += batchSize) {
+            const batchEnd = Math.min(batchStart + batchSize, finalAsins.length);
+            const batchAsins = finalAsins.slice(batchStart, batchEnd);
+            
+            try {
+              // Rate limiting for pricing batches
+              const now = Date.now();
+              const timeSinceLastPricing = now - lastPricingRequest;
+              if (timeSinceLastPricing < pricingMinInterval) {
+                await new Promise(resolve => setTimeout(resolve, pricingMinInterval - timeSinceLastPricing));
+              }
+              lastPricingRequest = Date.now();
+              
+              sendMessage({ 
+                type: 'progress', 
+                data: { 
+                  step: `Fetching UK pricing for ASINs ${batchStart + 1}-${batchEnd} of ${finalAsins.length}...`, 
+                  progress: 15 + ((batchStart / finalAsins.length) * 20),
+                  totalAsins: finalAsins.length
+                } 
+              });
+              
+              const ukPricingBatch = await pricingClient.getCompetitivePricing(
+                batchAsins,
+                MARKETPLACES.UK.id,
+                'Asin',
+                'Consumer'
+              );
+              
+              // Process each product in the batch response
+              for (const product of ukPricingBatch) {
+                if (product.asin) {
+                  // SP-API returns CompetitivePrices array with PascalCase structure
+                  const competitivePrices = product.competitivePricing?.CompetitivePrices || [];
+                  
+                  // IMPORTANT: Filter out USED products - only consider NEW condition
+                  const newConditionPrices = competitivePrices.filter(
+                    (cp: any) => cp.condition === 'New' || cp.condition === 'new' || !cp.condition
+                  );
+                  
+                  if (newConditionPrices.length > 0) {
+                    // Look for buy box price first (CompetitivePriceId '1' is usually buy box)
+                    let buyBoxPrice = newConditionPrices.find(
+                      (cp: any) => cp.CompetitivePriceId === '1'
+                    );
+                    
+                    // If no buy box, look for other competitive prices
+                    let featuredPrice = newConditionPrices.find(
+                      (cp: any) => cp.CompetitivePriceId === 'B2C' || cp.CompetitivePriceId === '2'
+                    );
+                    
+                    const priceData = buyBoxPrice || featuredPrice || newConditionPrices[0];
+                    
+                    if (priceData && priceData.Price) {
+                      // Check both ListingPrice and LandedPrice structures
+                      const listingPrice = priceData.Price.ListingPrice || priceData.Price.LandedPrice;
+                      const price = listingPrice?.Amount;
+                      const currency = listingPrice?.CurrencyCode;
+                      
+                      if (price && currency) {
+                        ukPricingData.set(product.asin, {
+                          price: price,
+                          currency: currency,
+                          priceType: buyBoxPrice ? 'buy_box' : (featuredPrice ? 'featured_offer' : 'first_available'),
+                          numberOfOffers: product.competitivePricing?.NumberOfOfferListings?.find(
+                            (l: any) => l.condition === 'New'
+                          )?.Count || 0,
+                          salesRankings: product.salesRankings
+                        });
+                      }
+                    }
+                  }
+                }
+              }
+              
+            } catch (batchError: any) {
+              console.error('UK pricing batch error for ASINs', batchAsins, batchError);
+              // Continue with next batch
+            }
+          }
+          
+          sendMessage({ 
+            type: 'progress', 
+            data: { 
+              step: `UK pricing complete. Found pricing for ${ukPricingData.size} ASINs. Now analyzing each ASIN...`, 
+              progress: 35,
+              totalAsins: finalAsins.length
+            } 
+          });
+
+          // Process ASINs one by one for detailed analysis
           for (let i = 0; i < finalAsins.length; i++) {
             // Log if client disconnected but continue processing
             if (isControllerClosed || abortController.signal.aborted) {
@@ -267,7 +371,7 @@ export async function POST(request: NextRequest) {
               type: 'progress', 
               data: { 
                 step: `Analysing ASIN ${i + 1} of ${finalAsins.length}: ${asin}`, 
-                progress: 10 + (i / finalAsins.length) * 80,
+                progress: 35 + (i / finalAsins.length) * 60,
                 processedCount: i,
                 totalAsins: finalAsins.length
               } 
@@ -316,68 +420,10 @@ export async function POST(request: NextRequest) {
               // Get pricing for all marketplaces
               const pricingByMarketplace: any = {};
               
-              // First get UK pricing
-              try {
-                // Rate limiting for pricing
-                const now = Date.now();
-                const timeSinceLastPricing = now - lastPricingRequest;
-                if (timeSinceLastPricing < pricingMinInterval) {
-                  await new Promise(resolve => setTimeout(resolve, pricingMinInterval - timeSinceLastPricing));
-                }
-                lastPricingRequest = Date.now();
-                
-                const ukPricing = await pricingClient.getCompetitivePricing(
-                  [asin],
-                  MARKETPLACES.UK.id,
-                  'Asin',
-                  'Consumer'
-                );
-                
-                if (ukPricing && ukPricing.length > 0) {
-                  const product = ukPricing[0];
-                  const competitivePrices = product.competitivePricing?.competitivePrices || [];
-                  
-                  // IMPORTANT: Filter out USED products - only consider NEW condition
-                  const newConditionPrices = competitivePrices.filter(
-                    (cp: any) => cp.condition === 'New' || cp.condition === 'new' || !cp.condition
-                  );
-                  
-                  if (newConditionPrices.length > 0) {
-                    // Look for buy box price first
-                    let buyBoxPrice = newConditionPrices.find(
-                      (cp: any) => cp.competitivePriceId === '1'
-                    );
-                    
-                    // If no buy box, look for other competitive prices
-                    let featuredPrice = newConditionPrices.find(
-                      (cp: any) => cp.competitivePriceId === 'B2C' || cp.competitivePriceId === '2'
-                    );
-                    
-                    const priceData = buyBoxPrice || featuredPrice || newConditionPrices[0];
-                    
-                    if (priceData && priceData.price) {
-                      const price = priceData.price.amount;
-                      const currency = priceData.price.currencyCode;
-                      
-                      if (price && currency) {
-                        pricingByMarketplace.UK = {
-                          price: price,
-                          currency: currency,
-                          priceType: buyBoxPrice ? 'buy_box' : (featuredPrice ? 'featured_offer' : 'first_available'),
-                          numberOfOffers: product.competitivePricing?.numberOfOfferListings?.find(
-                            (l: any) => l.condition === 'New'
-                          )?.count || 0,
-                          salesRankings: product.salesRankings
-                        };
-                      }
-                    }
-                  }
-                }
-              } catch (pricingError: any) {
-                console.error('UK pricing error for', asin, pricingError);
-                // Continue to next ASIN if UK pricing fails
-                processedCount++;
-                continue;
+              // Use pre-fetched UK pricing data
+              const ukPricingEntry = ukPricingData.get(asin);
+              if (ukPricingEntry) {
+                pricingByMarketplace.UK = ukPricingEntry;
               }
               
               // Skip if no UK price
@@ -390,16 +436,23 @@ export async function POST(request: NextRequest) {
               const ukPrice = pricingByMarketplace.UK.price;
               const ukCompetitors = pricingByMarketplace.UK.numberOfOffers;
 
-              // Get EU marketplace prices
+              // Get EU marketplace prices with proper rate limiting
               const euMarketplaces = Object.entries(MARKETPLACES).filter(([key]) => key !== 'UK');
               
-              for (const [country, marketplace] of euMarketplaces) {
+              // Fetch pricing for all EU marketplaces with staggered requests
+              const euPricingPromises = euMarketplaces.map(async ([country, marketplace], index) => {
+                // Stagger requests to avoid burst limits
+                if (index > 0) {
+                  await new Promise(resolve => setTimeout(resolve, index * 2000)); // 2 seconds between marketplaces
+                }
+                
                 try {
-                  // Rate limiting for pricing
+                  // Ensure minimum interval between pricing requests
                   const now = Date.now();
                   const timeSinceLastPricing = now - lastPricingRequest;
-                  if (timeSinceLastPricing < pricingMinInterval) {
-                    await new Promise(resolve => setTimeout(resolve, pricingMinInterval - timeSinceLastPricing));
+                  const euPricingMinInterval = 2000; // 2 seconds between requests
+                  if (timeSinceLastPricing < euPricingMinInterval) {
+                    await new Promise(resolve => setTimeout(resolve, euPricingMinInterval - timeSinceLastPricing));
                   }
                   lastPricingRequest = Date.now();
                   
@@ -412,7 +465,8 @@ export async function POST(request: NextRequest) {
                   
                   if (euPricing && euPricing.length > 0) {
                     const product = euPricing[0];
-                    const competitivePrices = product.competitivePricing?.competitivePrices || [];
+                    // SP-API returns CompetitivePrices array with PascalCase structure
+                    const competitivePrices = product.competitivePricing?.CompetitivePrices || [];
                     
                     // Filter for NEW condition only
                     const newConditionPrices = competitivePrices.filter(
@@ -421,33 +475,84 @@ export async function POST(request: NextRequest) {
                     
                     if (newConditionPrices.length > 0) {
                       let buyBoxPrice = newConditionPrices.find(
-                        (cp: any) => cp.competitivePriceId === '1'
+                        (cp: any) => cp.CompetitivePriceId === '1'
                       );
                       
                       let featuredPrice = newConditionPrices.find(
-                        (cp: any) => cp.competitivePriceId === 'B2C' || cp.competitivePriceId === '2'
+                        (cp: any) => cp.CompetitivePriceId === 'B2C' || cp.CompetitivePriceId === '2'
                       );
                       
                       const priceData = buyBoxPrice || featuredPrice || newConditionPrices[0];
                       
-                      if (priceData && priceData.price) {
-                        const price = priceData.price.amount;
-                        const currency = priceData.price.currencyCode;
+                      if (priceData && priceData.Price) {
+                        // Check both ListingPrice and LandedPrice structures
+                        const listingPrice = priceData.Price.ListingPrice || priceData.Price.LandedPrice;
+                        const price = listingPrice?.Amount;
+                        const currency = listingPrice?.CurrencyCode;
                         
                         if (price && currency) {
-                          pricingByMarketplace[country] = {
-                            price: price,
-                            currency: currency
-                          };
+                          return { country, data: { price, currency } };
                         }
                       }
                     }
                   }
+                  return { country, data: null };
                 } catch (euPricingError: any) {
+                  if (euPricingError.message?.includes('429') || euPricingError.message?.includes('quota') || euPricingError.message?.includes('TooManyRequests')) {
+                    console.log(`Rate limited for ${country} pricing, waiting 2s and retrying...`);
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    // Retry once
+                    try {
+                      const euPricing = await pricingClient.getCompetitivePricing(
+                        [asin],
+                        marketplace.id,
+                        'Asin',
+                        'Consumer'
+                      );
+                      
+                      if (euPricing && euPricing.length > 0) {
+                        const product = euPricing[0];
+                        const competitivePrices = product.competitivePricing?.CompetitivePrices || [];
+                        const newConditionPrices = competitivePrices.filter(
+                          (cp: any) => cp.condition === 'New' || cp.condition === 'new' || !cp.condition
+                        );
+                        
+                        if (newConditionPrices.length > 0) {
+                          let buyBoxPrice = newConditionPrices.find((cp: any) => cp.CompetitivePriceId === '1');
+                          let featuredPrice = newConditionPrices.find((cp: any) => cp.CompetitivePriceId === 'B2C' || cp.CompetitivePriceId === '2');
+                          const priceData = buyBoxPrice || featuredPrice || newConditionPrices[0];
+                          
+                          if (priceData && priceData.Price) {
+                            const listingPrice = priceData.Price.ListingPrice || priceData.Price.LandedPrice;
+                            const price = listingPrice?.Amount;
+                            const currency = listingPrice?.CurrencyCode;
+                            
+                            if (price && currency) {
+                              return { country, data: { price, currency } };
+                            }
+                          }
+                        }
+                      }
+                      return { country, data: null };
+                    } catch (retryError) {
+                      console.error(`Retry failed for ${country}:`, retryError);
+                      return { country, data: null };
+                    }
+                  }
                   console.error(`${country} pricing error for ${asin}:`, euPricingError);
-                  // Continue with other marketplaces
+                  return { country, data: null };
                 }
-              }
+              });
+              
+              // Wait for all EU marketplace requests to complete
+              const euPricingResults = await Promise.all(euPricingPromises);
+              
+              // Process results into pricingByMarketplace
+              euPricingResults.forEach(({ country, data }) => {
+                if (data) {
+                  pricingByMarketplace[country] = data;
+                }
+              });
               
               // Check if we have at least one EU marketplace with valid pricing
               const validEuMarketplaces = Object.entries(pricingByMarketplace)

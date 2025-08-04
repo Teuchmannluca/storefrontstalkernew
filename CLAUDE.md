@@ -11,10 +11,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 5. Keep changes simple and focused - avoid massive or complex modifications
 6. Provide high-level explanations of changes made
 7. **Critical**: For any Supabase database changes, always use the MCP Supabase server tools rather than writing raw SQL files
-8. After completion, update TodoWrite with a summary of changes made 
-9. Use the Superbase MCP server
-10 , Always make sure we have the update doc and use the Context7 MCP pulls up-to-date
-11 make su
+8. After completion, update TodoWrite with a summary of changes made
+9. Use the Supabase MCP server for all database operations
+10. Always make sure we have the updated docs and use the Context7 MCP to pull up-to-date documentation
+
+## Critical SP-API Property Casing
+**EXTREMELY IMPORTANT**: Amazon SP-API responses use **PascalCase** (uppercase) property names, not camelCase:
+- ✅ `CompetitivePrices` (NOT competitivePrices)
+- ✅ `CompetitivePriceId` (NOT competitivePriceId)
+- ✅ `Price.ListingPrice.Amount` (NOT price.listingPrice.amount)
+- ✅ `NumberOfOfferListings` (NOT numberOfOfferListings)
+- ✅ `Product.CompetitivePricing` (NOT product.competitivePricing)
+- ✅ `Product.SalesRankings` (NOT product.salesRankings)
+
+**Debugging Note**: If arbitrage analysis shows "No UK pricing for ASIN" despite fetching data, check property casing first!
+
 
 # Amazon Storefront Tracker
 
@@ -63,9 +74,10 @@ node test-live-api.js          # Test live API connections
 - **Amazon SP-API Rate Limits**: 
   - getCatalogItem: 2 requests/second (burst: 2)
   - searchCatalogItems: 2 requests/second (burst: 2)
-  - getCompetitivePricing: 10 requests/second (burst: 30)
+  - getCompetitivePricing: 10 requests/second (burst: 30) - **Reduced to 0.5 req/sec in code to avoid quota errors**
   - getMyFeesEstimate: 1 request/second (burst: 2)
 - Custom token bucket rate limiter in `sp-api-rate-limiter.ts`
+- Competitive pricing client uses its own rate limiter with 2s intervals between requests
 - Automatic retry with exponential backoff on rate limit errors
 - Initial requests use 1.5s delay to avoid burst capacity issues
 
@@ -193,6 +205,19 @@ node test-live-api.js          # Test live API connections
    - Check Supabase JWT token is valid and not expired
    - Ensure RLS policies are configured for user isolation
 
+5. **"No UK pricing for ASIN" Despite Fetching Data**
+   - **Primary Cause**: SP-API property casing mismatch
+   - SP-API returns PascalCase properties (e.g., `CompetitivePrices`)
+   - Code must access with exact casing: `product.competitivePricing?.CompetitivePrices`
+   - TypeScript won't catch this at compile time - runtime error only
+   - **Solution**: Always use PascalCase when accessing SP-API response properties
+
+6. **Products Not Being Analyzed**
+   - Check logs for "No UK pricing" messages
+   - Verify SP-API property casing is correct
+   - Ensure pricing data mapping uses correct property paths
+   - Add debug logging to trace pricing data flow
+
 ## Environment Variables (Required)
 All stored in `.env.local`:
 
@@ -287,9 +312,16 @@ All stored in `.env.local`:
 
 ## Key Utilities and Libraries
 - **Rate Limiting**: `sp-api-rate-limiter.ts` (token bucket implementation)
+- **SP-API Competitive Pricing**: `sp-api-competitive-pricing.ts` (MUST use PascalCase properties)
 - **Sales Estimation**: `sales-estimator.ts` (BSR to monthly sales conversion)
 - **Profit Categorization**: `profit-categorizer.ts` (profitable/break-even/loss classification)
 - **Blacklist Service**: `blacklist-service.ts` (efficient ASIN filtering)
 - **Authentication**: `auth.ts` and `validateApiRequest()` for JWT validation
 - **Error Handling**: `error-handling.ts` with streaming-safe error management
 - **Exchange Rates**: `exchange-rates.ts` (EUR to GBP conversion)
+
+## Git Workflow & Version Control
+- **Before Major Changes**: Always commit current working state
+- **Property Casing Changes**: Be extremely careful when changing SP-API response property access
+- **Reverting to Working Version**: Use `git checkout <commit-hash> -- <file-path>` for specific files
+- **Testing After Changes**: Always test arbitrage analysis after SP-API modifications
