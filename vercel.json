@@ -6,6 +6,9 @@
     "src/app/api/arbitrage/analyze-stream/route.ts": {
       "maxDuration": 300
     },
+    "src/app/api/arbitrage/analyze-all-sellers/route.ts": {
+      "maxDuration": 300
+    },
     "src/app/api/sync-products/route.ts": {
       "maxDuration": 300
     },
