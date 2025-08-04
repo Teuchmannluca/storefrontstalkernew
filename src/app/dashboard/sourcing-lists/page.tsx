@@ -59,6 +59,7 @@ export default function SourcingListsPage() {
   const [showAddStorefrontModal, setShowAddStorefrontModal] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
+  const [showDeleteItemConfirm, setShowDeleteItemConfirm] = useState<string | null>(null)
   const [editingList, setEditingList] = useState<SourcingList | null>(null)
   
   // Form states
@@ -290,6 +291,58 @@ export default function SourcingListsPage() {
       }
     } catch (error) {
       console.error('Error editing list:', error)
+    }
+  }
+
+  const handleDeleteItem = async (itemId: string) => {
+    if (!selectedList) return
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const response = await fetch(`/api/sourcing-lists/${selectedList.id}/items`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          item_id: itemId
+        })
+      })
+
+      if (response.ok) {
+        // Remove item from local state
+        setListItems(prev => prev.filter(item => item.id !== itemId))
+        
+        // Update the selected list totals
+        const deletedItem = listItems.find(item => item.id === itemId)
+        if (deletedItem && selectedList) {
+          const newItemCount = selectedList.item_count - 1
+          const newTotalProfit = selectedList.total_profit - deletedItem.profit
+          
+          setSelectedList(prev => prev ? {
+            ...prev,
+            item_count: newItemCount,
+            total_profit: newTotalProfit
+          } : null)
+          
+          // Also update in the lists array
+          setSourcingLists(prev => prev.map(list => 
+            list.id === selectedList.id
+              ? { ...list, item_count: newItemCount, total_profit: newTotalProfit }
+              : list
+          ))
+        }
+        
+        setShowDeleteItemConfirm(null)
+      } else {
+        const result = await response.json()
+        console.error('Failed to delete item:', result.error)
+      }
+    } catch (error) {
+      console.error('Error deleting item:', error)
     }
   }
 
@@ -582,6 +635,17 @@ export default function SourcingListsPage() {
                             </span>
                           </div>
                         </div>
+                        
+                        {/* Delete button */}
+                        <div className="flex-shrink-0">
+                          <button
+                            onClick={() => setShowDeleteItemConfirm(item.id)}
+                            className="p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Remove from list"
+                          >
+                            <TrashIcon className="w-5 h-5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -700,7 +764,43 @@ export default function SourcingListsPage() {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Item Confirmation Modal */}
+      {showDeleteItemConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <ExclamationTriangleIcon className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-medium text-gray-900">Remove Item</h3>
+                <p className="text-sm text-gray-500">This action cannot be undone</p>
+              </div>
+            </div>
+            
+            <p className="text-gray-700 mb-6">
+              Are you sure you want to remove this item from the sourcing list?
+            </p>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowDeleteItemConfirm(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteItem(showDeleteItemConfirm)}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+              >
+                Remove Item
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete List Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
