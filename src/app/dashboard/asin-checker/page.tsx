@@ -110,13 +110,13 @@ export default function ASINCheckerPage() {
   const handleAddASINs = () => {
     const newASINs = asinInput
       .split(/[\s,\n]+/) // Split by spaces, commas, or newlines
-      .map(asin => asin.trim().toUpperCase())
-      .filter(asin => asin.length > 0)
+      .map((asin: any) => asin.trim().toUpperCase())
+      .filter((asin: any) => asin.length > 0)
     
     const errors: Record<string, string> = {}
     const validASINs: string[] = []
     
-    newASINs.forEach(asin => {
+    newASINs.forEach((asin: any) => {
       if (!validateASIN(asin)) {
         errors[asin] = 'Invalid ASIN format'
       } else if (asinList.includes(asin)) {
@@ -136,7 +136,7 @@ export default function ASINCheckerPage() {
 
   // Remove ASIN from list
   const handleRemoveASIN = (asin: string) => {
-    setAsinList(asinList.filter(a => a !== asin))
+    setAsinList(asinList.filter((a: any) => a !== asin))
     const newErrors = { ...validationErrors }
     delete newErrors[asin]
     setValidationErrors(newErrors)
@@ -297,15 +297,15 @@ export default function ASINCheckerPage() {
   // Calculate summary statistics
   const summaryStats = {
     totalDeals: opportunities.length,
-    profitableDeals: opportunities.filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length,
+    profitableDeals: opportunities.filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length,
     totalPotentialProfit: opportunities
-      .filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
-      .reduce((sum, opp) => sum + (opp.bestOpportunity?.profit || 0), 0),
+      .filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
+      .reduce((sum: any, opp: any) => sum + (opp.bestOpportunity?.profit || 0), 0),
     averageROI: opportunities.length > 0
       ? opportunities
-          .filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
-          .reduce((sum, opp) => sum + (opp.bestOpportunity?.roi || 0), 0) / 
-          opportunities.filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length
+          .filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
+          .reduce((sum: any, opp: any) => sum + (opp.bestOpportunity?.roi || 0), 0) / 
+          opportunities.filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length
       : 0
   }
 
@@ -425,7 +425,7 @@ export default function ASINCheckerPage() {
               {Object.keys(validationErrors).length > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                   <p className="text-sm font-medium text-red-800 mb-1">Invalid ASINs:</p>
-                  {Object.entries(validationErrors).map(([asin, error]) => (
+                  {Object.entries(validationErrors).map(([asin, error]: any) => (
                     <p key={asin} className="text-sm text-red-600">
                       {asin}: {error}
                     </p>
@@ -451,7 +451,7 @@ export default function ASINCheckerPage() {
               </div>
               
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                {asinList.map((asin) => (
+                {asinList.map((asin: any) => (
                   <div key={asin} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
                     <span className="font-mono text-sm">{asin}</span>
                     <button
@@ -597,7 +597,7 @@ export default function ASINCheckerPage() {
                         onClick={() => {
                           const profitableAsins = sortedOpportunities
                             .filter(opp => categorizeProfitLevel(opp.bestOpportunity?.profit || 0) === 'profitable')
-                            .map(opp => opp.asin);
+                            .map((opp: any) => opp.asin);
                           if (selectedDeals.size === profitableAsins.length) {
                             setSelectedDeals(new Set());
                           } else {
@@ -619,11 +619,11 @@ export default function ASINCheckerPage() {
                         </span>
                         <button
                           onClick={() => {
-                            const selectedOpps = sortedOpportunities.filter(opp => selectedDeals.has(opp.asin));
+                            const selectedOpps = sortedOpportunities.filter((opp: any) => selectedDeals.has(opp.asin));
                             let bulkMessage = `🎯 *ASIN Checker Results* (${selectedOpps.length} items)\n\n`;
                             let totalProfit = 0;
                             
-                            selectedOpps.forEach((opp, index) => {
+                            selectedOpps.forEach((opp: any, index: any) => {
                               totalProfit += opp.bestOpportunity?.profit || 0;
                               bulkMessage += `${index + 1}. *${opp.productName}*\n`;
                               bulkMessage += `   ASIN: ${opp.asin}\n`;
@@ -656,7 +656,7 @@ export default function ASINCheckerPage() {
 
               {/* Opportunity Cards - Same as A2A EU */}
               {(() => {
-                const filteredOpportunities = sortedOpportunities.filter(opp => {
+                const filteredOpportunities = sortedOpportunities.filter((opp: any) => {
                   const profitCategory = opp.profitCategory || categorizeProfitLevel(opp.bestOpportunity?.profit || 0);
                   
                   switch (profitFilter) {
@@ -688,7 +688,7 @@ export default function ASINCheckerPage() {
                   );
                 }
                 
-                return filteredOpportunities.map((opp, index) => {
+                return filteredOpportunities.map((opp: any, index: any) => {
                   const profitCategory = opp.profitCategory || categorizeProfitLevel(opp.bestOpportunity?.profit || 0);
                   const isProfitable = profitCategory === 'profitable';
                   
@@ -843,7 +843,7 @@ export default function ASINCheckerPage() {
                         <span className="text-sm font-normal text-gray-500">({opp.euPrices?.length || 0} MARKETS)</span>
                       </h4>
                       <div className="grid grid-cols-2 gap-3">
-                        {(opp.euPrices || []).map((euPrice, idx) => {
+                        {(opp.euPrices || []).map((euPrice: any, idx: any) => {
                           const isProfitable = (euPrice.profit || 0) > 0;
                           const isBest = euPrice.marketplace === opp.bestOpportunity?.marketplace;
                           

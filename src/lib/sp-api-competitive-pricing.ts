@@ -316,12 +316,12 @@ export class SPAPICompetitivePricingClient {
   ): string {
     const canonicalHeaders = Object.keys(headers)
       .sort()
-      .map(key => `${key.toLowerCase()}:${headers[key].trim()}`)
+      .map((key: any) => `${key.toLowerCase()}:${headers[key].trim()}`)
       .join('\n');
     
     const signedHeaders = Object.keys(headers)
       .sort()
-      .map(key => key.toLowerCase())
+      .map((key: any) => key.toLowerCase())
       .join(';');
     
     const hashedPayload = crypto.createHash('sha256').update(payload).digest('hex');
@@ -434,7 +434,7 @@ export class SPAPICompetitivePricingClient {
     
     const signedHeaders = Object.keys(signatureHeaders)
       .sort()
-      .map(key => key.toLowerCase())
+      .map((key: any) => key.toLowerCase())
       .join(';');
     
     // Build all headers for the request (including those not in signature)
@@ -589,7 +589,7 @@ export class SPAPICompetitivePricingClient {
       throw new Error('Maximum 20 requests per batch');
     }
     
-    const batchRequests: ItemOffersRequest[] = requests.map(req => ({
+    const batchRequests: ItemOffersRequest[] = requests.map((req: any) => ({
       uri: `/products/pricing/v0/items/${req.asin}/offers`,
       method: 'GET',
       marketplaceId: req.marketplaceId || this.config.marketplaceId,

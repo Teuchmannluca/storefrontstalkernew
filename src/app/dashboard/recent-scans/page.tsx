@@ -194,7 +194,7 @@ export default function RecentScansPage() {
     
     try {
       // Find the scan in our current data
-      const scan = savedScans.find(s => s.id === scanId)
+      const scan = savedScans.find((s: any) => s.id === scanId)
       if (!scan) {
         throw new Error('Scan not found')
       }
@@ -218,7 +218,7 @@ export default function RecentScansPage() {
       }
       
       // Transform the opportunities to match the expected format
-      const transformedOpportunities: ArbitrageOpportunity[] = opportunities.map(opp => ({
+      const transformedOpportunities: ArbitrageOpportunity[] = opportunities.map((opp: any) => ({
         asin: opp.asin,
         productName: opp.product_name || opp.asin,
         productImage: opp.product_image || '',
@@ -293,7 +293,7 @@ export default function RecentScansPage() {
     ]
 
     // Convert scan data to CSV rows
-    const csvRows = filteredScans.map(scan => {
+    const csvRows = filteredScans.map((scan: any) => {
       const startedAt = new Date(scan.started_at)
       const completedAt = scan.completed_at ? new Date(scan.completed_at) : null
       const duration = completedAt 
@@ -318,7 +318,7 @@ export default function RecentScansPage() {
 
     // Combine headers and data
     const csvContent = [headers, ...csvRows]
-      .map(row => row.map(field => {
+      .map((row: any) => row.map((field: any) => {
         // Escape fields that contain commas, quotes, or newlines
         const stringField = String(field)
         if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n')) {
@@ -365,7 +365,7 @@ export default function RecentScansPage() {
       }
 
       // Remove the scan from the local state
-      setSavedScans(prevScans => prevScans.filter(scan => scan.id !== scanId))
+      setSavedScans(prevScans => prevScans.filter((scan: any) => scan.id !== scanId))
       
       // If we're currently viewing this scan, go back to scan list
       if (viewingScan?.id === scanId) {
@@ -457,7 +457,7 @@ export default function RecentScansPage() {
   }
 
   const filteredScans = savedScans
-    .filter(scan => {
+    .filter((scan: any) => {
       if (searchTerm && !scan.storefront_name?.toLowerCase().includes(searchTerm.toLowerCase())) return false
       if (filterStatus !== 'all' && scan.status !== filterStatus) return false
       if (filterType !== 'all' && scan.scan_type !== filterType) return false
@@ -465,7 +465,7 @@ export default function RecentScansPage() {
     })
 
   // Group scans by date
-  const groupedScans = filteredScans.reduce((groups, scan) => {
+  const groupedScans = filteredScans.reduce((groups: any, scan: any) => {
     const date = new Date(scan.started_at).toLocaleDateString('en-GB', { 
       day: 'numeric', 
       month: 'long', 
@@ -478,13 +478,13 @@ export default function RecentScansPage() {
 
   // Statistics
   const totalScans = savedScans.length
-  const completedScans = savedScans.filter(s => s.status === 'completed').length
-  const profitableScans = savedScans.filter(s => s.status === 'completed' && s.opportunities_found > 0).length
-  const totalOpportunities = savedScans.reduce((sum, s) => sum + (s.opportunities_found || 0), 0)
+  const completedScans = savedScans.filter((s: any) => s.status === 'completed').length
+  const profitableScans = savedScans.filter((s: any) => s.status === 'completed' && s.opportunities_found > 0).length
+  const totalOpportunities = savedScans.reduce((sum: any, s: any) => sum + (s.opportunities_found || 0), 0)
 
   // Function to filter and sort opportunities
   const getFilteredAndSortedOpportunities = () => {
-    let filtered = opportunities.filter(opp => {
+    let filtered = opportunities.filter((opp: any) => {
       // Filter by deal type (profitable, break-even, or all)
       const profit = opp.bestOpportunity?.profit || 0;
       switch (dealFilter) {
@@ -646,7 +646,7 @@ export default function RecentScansPage() {
                             </span>
                             <button
                               onClick={() => {
-                                const selectedOpportunities = opportunities.filter(opp => selectedDeals.has(opp.asin))
+                                const selectedOpportunities = opportunities.filter((opp: any) => selectedDeals.has(opp.asin))
                                 if (selectedOpportunities.length > 0) {
                                   setShowSourcingListModal(true)
                                 }
@@ -660,8 +660,8 @@ export default function RecentScansPage() {
                             </button>
                             <button
                               onClick={() => {
-                                const selectedOpportunities = opportunities.filter(opp => selectedDeals.has(opp.asin))
-                                const bulkMessage = selectedOpportunities.map(opp => 
+                                const selectedOpportunities = opportunities.filter((opp: any) => selectedDeals.has(opp.asin))
+                                const bulkMessage = selectedOpportunities.map((opp: any) => 
                                   `${opp.productName} (${opp.asin}) - £${opp.bestOpportunity.profit.toFixed(2)} profit - ${opp.bestOpportunity.roi.toFixed(1)}% ROI\\n` +
                                   `Buy: https://www.amazon.${getAmazonDomain(opp.bestOpportunity.marketplace)}/dp/${opp.asin}\\n` +
                                   `Sell: https://www.amazon.co.uk/dp/${opp.asin}\\n`
@@ -866,7 +866,7 @@ export default function RecentScansPage() {
                   </div>
 
                   {/* Opportunities List */}
-                  {getFilteredAndSortedOpportunities().map((opp, index) => {
+                  {getFilteredAndSortedOpportunities().map((opp: any, index: any) => {
                     const isProfitable = opp.bestOpportunity?.profit > 0;
                     
                     return (
@@ -1260,7 +1260,7 @@ export default function RecentScansPage() {
                                 {/* Add to List Button */}
                                 <button
                                   onClick={() => {
-                                    const profitableOpps = getFilteredAndSortedOpportunities().filter(o => o.bestOpportunity?.profit > 0)
+                                    const profitableOpps = getFilteredAndSortedOpportunities().filter((o: any) => o.bestOpportunity?.profit > 0)
                                     if (profitableOpps.length === 0) return
                                     
                                     // Set the current opportunity as selected and open modal
@@ -1344,7 +1344,7 @@ export default function RecentScansPage() {
                                 <span className="text-sm font-normal text-gray-500">({opp.euPrices?.length || 0} MARKETS)</span>
                               </h4>
                               <div className="grid grid-cols-2 gap-3">
-                                {(opp.euPrices || []).map((euPrice, idx) => {
+                                {(opp.euPrices || []).map((euPrice: any, idx: any) => {
                                   const isProfitable = (euPrice.profit || 0) > 0;
                                   const isBest = euPrice.marketplace === opp.bestOpportunity?.marketplace;
                                   const getCountryFlag = (marketplace: string) => {
@@ -1562,7 +1562,7 @@ export default function RecentScansPage() {
             </div>
           ) : (
             <div className="space-y-8">
-              {Object.entries(groupedScans).map(([date, scans]) => (
+              {Object.entries(groupedScans).map(([date, scans]: any) => (
                 <div key={date}>
                   <div className="flex items-center gap-3 mb-4">
                     <CalendarIcon className="w-5 h-5 text-gray-400" />
@@ -1571,7 +1571,7 @@ export default function RecentScansPage() {
                   </div>
                   
                   <div className="space-y-3">
-                    {scans.map((scan) => (
+                    {scans.map((scan: any) => (
                       <div
                         key={scan.id}
                         className={`bg-white rounded-xl shadow-sm border border-gray-100 p-6 transition-all ${
@@ -1762,7 +1762,7 @@ export default function RecentScansPage() {
           setShowSourcingListModal(false)
           setSelectedDeals(new Set()) // Clear selection after closing modal
         }}
-        selectedDeals={opportunities.filter(opp => selectedDeals.has(opp.asin))}
+        selectedDeals={opportunities.filter((opp: any) => selectedDeals.has(opp.asin))}
         addedFrom="recent_scans"
       />
 

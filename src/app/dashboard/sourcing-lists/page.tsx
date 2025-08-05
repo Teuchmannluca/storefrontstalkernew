@@ -199,7 +199,7 @@ export default function SourcingListsPage() {
       })
 
       if (response.ok) {
-        setSourcingLists(prev => prev.filter(list => list.id !== listId))
+        setSourcingLists(prev => prev.filter((list: any) => list.id !== listId))
         if (selectedList?.id === listId) {
           setSelectedList(null)
           setListItems([])
@@ -233,7 +233,7 @@ export default function SourcingListsPage() {
       const result = await response.json()
 
       if (response.ok) {
-        setSourcingLists(prev => prev.map(list => 
+        setSourcingLists(prev => prev.map((list: any) => 
           list.id === listId 
             ? { ...list, is_favorite: !currentFavorite }
             : list
@@ -271,7 +271,7 @@ export default function SourcingListsPage() {
       const result = await response.json()
 
       if (response.ok) {
-        setSourcingLists(prev => prev.map(list => 
+        setSourcingLists(prev => prev.map((list: any) => 
           list.id === editingList.id 
             ? { ...list, name: editName.trim(), description: editDescription.trim() || undefined }
             : list
@@ -314,10 +314,10 @@ export default function SourcingListsPage() {
 
       if (response.ok) {
         // Remove item from local state
-        setListItems(prev => prev.filter(item => item.id !== itemId))
+        setListItems(prev => prev.filter((item: any) => item.id !== itemId))
         
         // Update the selected list totals
-        const deletedItem = listItems.find(item => item.id === itemId)
+        const deletedItem = listItems.find((item: any) => item.id === itemId)
         if (deletedItem && selectedList) {
           const newItemCount = selectedList.item_count - 1
           const newTotalProfit = selectedList.total_profit - deletedItem.profit
@@ -329,7 +329,7 @@ export default function SourcingListsPage() {
           } : null)
           
           // Also update in the lists array
-          setSourcingLists(prev => prev.map(list => 
+          setSourcingLists(prev => prev.map((list: any) => 
             list.id === selectedList.id
               ? { ...list, item_count: newItemCount, total_profit: newTotalProfit }
               : list
@@ -432,7 +432,7 @@ export default function SourcingListsPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {sourcingLists.map((list) => (
+                  {sourcingLists.map((list: any) => (
                     <div
                       key={list.id}
                       className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow"
@@ -559,7 +559,7 @@ export default function SourcingListsPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {listItems.map((item) => (
+                  {listItems.map((item: any) => (
                     <div key={item.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
                       <div className="flex items-start gap-6">
                         <div className="w-20 h-20 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">

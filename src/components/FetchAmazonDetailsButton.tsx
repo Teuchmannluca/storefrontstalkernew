@@ -33,7 +33,7 @@ export default function FetchAmazonDetailsButton({ storefrontId, onUpdateComplet
         return
       }
 
-      const asins = products.map(p => p.asin)
+      const asins = products.map((p: any) => p.asin)
       console.log(`Fetching Amazon details for ${asins.length} products`)
 
       // Call the batch API

@@ -158,7 +158,7 @@ export class SPAPICatalogClient {
     const canonicalQueryString = queryParams
       ? Object.entries(queryParams)
           .sort(([a], [b]) => a.localeCompare(b))
-          .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+          .map(([k, v]: any) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
           .join('&')
       : '';
     
@@ -168,7 +168,7 @@ export class SPAPICatalogClient {
       'x-amz-date': datetime,
     })
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${k.toLowerCase()}:${v}`)
+      .map(([k, v]: any) => `${k.toLowerCase()}:${v}`)
       .join('\n');
     
     const signedHeaders = Object.keys({
@@ -176,7 +176,7 @@ export class SPAPICatalogClient {
       'host': true,
       'x-amz-date': true,
     })
-      .map(k => k.toLowerCase())
+      .map((k: any) => k.toLowerCase())
       .sort()
       .join(';');
     

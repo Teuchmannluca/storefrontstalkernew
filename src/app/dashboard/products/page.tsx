@@ -76,7 +76,7 @@ export default function ProductsPage() {
 
       if (storefrontsError) throw storefrontsError
 
-      const storefrontIds = storefronts?.map(s => s.id) || []
+      const storefrontIds = storefronts?.map((s: any) => s.id) || []
 
       // Get counts first
       const { count: totalCount, error: countError } = await supabase
@@ -94,7 +94,7 @@ export default function ProductsPage() {
         .in('storefront_id', storefrontIds)
 
       if (uniqueError) throw uniqueError
-      const uniqueAsinSet = new Set((uniqueAsins || []).map(p => p.asin))
+      const uniqueAsinSet = new Set((uniqueAsins || []).map((p: any) => p.asin))
       setUniqueAsinsCount(uniqueAsinSet.size)
 
       // Then get products for those storefronts (limit to 1000 for display)
@@ -113,7 +113,7 @@ export default function ProductsPage() {
       setProducts(data || [])
       
       // Group products by ASIN
-      const grouped = data?.reduce((acc: { [key: string]: GroupedProduct }, product) => {
+      const grouped = data?.reduce((acc: { [key: string]: GroupedProduct }, product: any) => {
         if (!acc[product.asin]) {
           acc[product.asin] = {
             asin: product.asin,
@@ -150,7 +150,7 @@ export default function ProductsPage() {
     router.push('/')
   }
 
-  const filteredProducts = groupedProducts.filter(product =>
+  const filteredProducts = groupedProducts.filter((product: any) =>
     product.asin.toLowerCase().includes(searchTerm.toLowerCase()) ||
     product.product_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (product.brand && product.brand.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -213,7 +213,7 @@ export default function ProductsPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {filteredProducts.map((product) => (
+              {filteredProducts.map((product: any) => (
                 <div key={product.asin} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow">
                   {/* Product Image */}
                   <div 
@@ -281,7 +281,7 @@ export default function ProductsPage() {
                     <div className="border-t pt-3">
                       <p className="text-xs font-medium text-gray-700 mb-2">Available at:</p>
                       <div className="space-y-1">
-                        {product.storefronts.map((storefront) => (
+                        {product.storefronts.map((storefront: any) => (
                           <div key={storefront.id} className="flex items-center justify-between text-xs">
                             <span className="text-gray-600 truncate">{storefront.name}</span>
                             <a

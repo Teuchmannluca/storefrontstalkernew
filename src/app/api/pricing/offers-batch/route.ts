@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     const batchResponse = await pricingClient.getItemOffersBatch(requests);
 
     // Format responses
-    const results = batchResponse.responses.map((response, index) => {
+    const results = batchResponse.responses.map((response: any, index: any) => {
       const request = requests[index];
       
       if (response.status.statusCode !== 200) {
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Format offers
-      const offers = product.offers?.map(offer => ({
+      const offers = product.offers?.map((offer: any) => ({
         sellerId: offer.sellerId,
         price: offer.price,
         shipping: offer.shippingPrice,
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
       })) || [];
 
       // Sort by total price
-      offers.sort((a, b) => a.totalPrice.amount - b.totalPrice.amount);
+      offers.sort((a: any, b: any) => a.totalPrice.amount - b.totalPrice.amount);
 
       return {
         success: true,
@@ -125,8 +125,8 @@ export async function POST(request: NextRequest) {
       success: true,
       results,
       totalRequested: requests.length,
-      successful: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
+      successful: results.filter((r: any) => r.success).length,
+      failed: results.filter((r: any) => !r.success).length,
       timestamp: Date.now() // Ensure fresh data
     }, {
       headers: {

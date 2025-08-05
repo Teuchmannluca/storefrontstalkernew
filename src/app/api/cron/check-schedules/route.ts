@@ -98,17 +98,17 @@ export async function GET(request: NextRequest) {
         }
 
         // Queue the storefront updates
-        const storefrontIds = storefronts.map(s => s.id)
+        const storefrontIds = storefronts.map((s: any) => s.id)
         await updateManager.queueStorefrontUpdates(storefrontIds)
 
         // Process the queue (this will respect rate limits)
         const updateResults = await updateManager.processQueue()
         
-        const successful = updateResults.filter(r => r.success).length
-        const failed = updateResults.filter(r => !r.success).length
-        const totalProductsAdded = updateResults.reduce((sum, r) => sum + r.productsAdded, 0)
-        const totalProductsRemoved = updateResults.reduce((sum, r) => sum + r.productsRemoved, 0)
-        const totalTokensUsed = updateResults.reduce((sum, r) => sum + r.tokensUsed, 0)
+        const successful = updateResults.filter((r: any) => r.success).length
+        const failed = updateResults.filter((r: any) => !r.success).length
+        const totalProductsAdded = updateResults.reduce((sum: any, r: any) => sum + r.productsAdded, 0)
+        const totalProductsRemoved = updateResults.reduce((sum: any, r: any) => sum + r.productsRemoved, 0)
+        const totalTokensUsed = updateResults.reduce((sum: any, r: any) => sum + r.tokensUsed, 0)
 
         console.log(`✅ Completed update for ${schedule.email}: ${successful} successful, ${failed} failed`)
         console.log(`📊 Products: +${totalProductsAdded}, -${totalProductsRemoved}, Tokens: ${totalTokensUsed}`)
@@ -139,8 +139,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const successful = results.filter(r => r.success).length
-    const failed = results.filter(r => !r.success).length
+    const successful = results.filter((r: any) => r.success).length
+    const failed = results.filter((r: any) => !r.success).length
 
     console.log(`🏁 Cron job completed: ${successful} successful, ${failed} failed`)
 

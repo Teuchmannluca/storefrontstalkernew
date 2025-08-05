@@ -238,9 +238,9 @@ function A2AEUPageContent() {
 
   const handleStorefrontToggle = (storefront: Storefront) => {
     setSelectedStorefronts(prev => {
-      const isSelected = prev.some(s => s.id === storefront.id)
+      const isSelected = prev.some((s: any) => s.id === storefront.id)
       if (isSelected) {
-        return prev.filter(s => s.id !== storefront.id)
+        return prev.filter((s: any) => s.id !== storefront.id)
       } else {
         return [...prev, storefront]
       }
@@ -300,7 +300,7 @@ function A2AEUPageContent() {
       }
       
       // Transform the opportunities to match the expected format
-      const transformedOpportunities: ArbitrageOpportunity[] = opportunities.map(opp => ({
+      const transformedOpportunities: ArbitrageOpportunity[] = opportunities.map((opp: any) => ({
         asin: opp.asin,
         productName: opp.product_name || opp.asin,
         productImage: opp.product_image || '',
@@ -352,10 +352,10 @@ function A2AEUPageContent() {
       if (selectionMode === 'single' && selectedStorefront) {
         query = query.eq('storefront_id', selectedStorefront.id)
       } else if (selectionMode === 'multiple' && selectedStorefronts.length > 0) {
-        query = query.in('storefront_id', selectedStorefronts.map(s => s.id))
+        query = query.in('storefront_id', selectedStorefronts.map((s: any) => s.id))
       } else if (selectionMode === 'all') {
         // For all mode, get products from all user's storefronts
-        const storefrontIds = storefronts.map(s => s.id)
+        const storefrontIds = storefronts.map((s: any) => s.id)
         if (storefrontIds.length > 0) {
           query = query.in('storefront_id', storefrontIds)
         }
@@ -545,7 +545,7 @@ function A2AEUPageContent() {
           'Authorization': `Bearer ${session.access_token}`
         },
         body: JSON.stringify({
-          storefrontIds: selectedStorefronts.map(s => s.id)
+          storefrontIds: selectedStorefronts.map((s: any) => s.id)
         })
       })
       
@@ -740,7 +740,7 @@ function A2AEUPageContent() {
                   
                   // Check if it's a critical error that should stop processing
                   const criticalErrors = ['No products found', 'Authentication required', 'Service temporarily unavailable']
-                  const isCriticalError = criticalErrors.some(err => message.data.error.includes(err))
+                  const isCriticalError = criticalErrors.some((err: any) => message.data.error.includes(err))
                   
                   if (isCriticalError) {
                     alert(message.data.error)
@@ -806,15 +806,15 @@ function A2AEUPageContent() {
   // Calculate summary statistics
   const summaryStats = {
     totalDeals: opportunities.length,
-    profitableDeals: opportunities.filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length,
+    profitableDeals: opportunities.filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length,
     totalPotentialProfit: opportunities
-      .filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
-      .reduce((sum, opp) => sum + (opp.bestOpportunity?.profit || 0), 0),
+      .filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
+      .reduce((sum: any, opp: any) => sum + (opp.bestOpportunity?.profit || 0), 0),
     averageROI: opportunities.length > 0
       ? opportunities
-          .filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
-          .reduce((sum, opp) => sum + (opp.bestOpportunity?.roi || 0), 0) / 
-          opportunities.filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length
+          .filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
+          .reduce((sum: any, opp: any) => sum + (opp.bestOpportunity?.roi || 0), 0) / 
+          opportunities.filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length
       : 0
   }
 
@@ -958,7 +958,7 @@ function A2AEUPageContent() {
                       leaveTo="transform opacity-0 scale-95"
                     >
                       <Listbox.Options className="absolute z-10 mt-2 max-h-60 w-full overflow-auto rounded-xl bg-white py-2 text-base shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
-                        {storefronts.map((storefront) => (
+                        {storefronts.map((storefront: any) => (
                           <Listbox.Option
                             key={storefront.id}
                             className={({ active }) =>
@@ -1020,8 +1020,8 @@ function A2AEUPageContent() {
                   </div>
                   
                   <div className="bg-white rounded-xl border-2 border-gray-200 max-h-60 overflow-y-auto">
-                    {storefronts.map((storefront) => {
-                      const isSelected = selectedStorefronts.some(s => s.id === storefront.id)
+                    {storefronts.map((storefront: any) => {
+                      const isSelected = selectedStorefronts.some((s: any) => s.id === storefront.id)
                       return (
                         <div
                           key={storefront.id}
@@ -1056,7 +1056,7 @@ function A2AEUPageContent() {
                     <div>
                       <div className="font-medium text-gray-900">All Storefronts Selected</div>
                       <div className="text-sm text-gray-500">
-                        Analysing all {storefronts.length} storefronts: {storefronts.map(s => s.name).join(', ')}
+                        Analysing all {storefronts.length} storefronts: {storefronts.map((s: any) => s.name).join(', ')}
                       </div>
                     </div>
                   </div>
@@ -1433,8 +1433,8 @@ function A2AEUPageContent() {
                       <button
                         onClick={() => {
                           const profitableAsins = sortedOpportunities
-                            .filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
-                            .map(opp => opp.asin);
+                            .filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
+                            .map((opp: any) => opp.asin);
                           if (selectedDeals.size === profitableAsins.length) {
                             setSelectedDeals(new Set());
                           } else {
@@ -1443,7 +1443,7 @@ function A2AEUPageContent() {
                         }}
                         className="px-3 py-2 text-sm font-medium text-indigo-600 hover:text-indigo-800"
                       >
-                        {selectedDeals.size > 0 && selectedDeals.size === sortedOpportunities.filter(opp => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length 
+                        {selectedDeals.size > 0 && selectedDeals.size === sortedOpportunities.filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length 
                           ? 'Deselect All' 
                           : 'Select All Profitable'}
                       </button>
@@ -1456,7 +1456,7 @@ function A2AEUPageContent() {
                         </span>
                         <button
                           onClick={() => {
-                            const selectedOpps = sortedOpportunities.filter(opp => selectedDeals.has(opp.asin))
+                            const selectedOpps = sortedOpportunities.filter((opp: any) => selectedDeals.has(opp.asin))
                             if (selectedOpps.length > 0) {
                               setShowSourcingListModal(true)
                             }
@@ -1470,11 +1470,11 @@ function A2AEUPageContent() {
                         </button>
                         <button
                           onClick={() => {
-                            const selectedOpps = sortedOpportunities.filter(opp => selectedDeals.has(opp.asin));
+                            const selectedOpps = sortedOpportunities.filter((opp: any) => selectedDeals.has(opp.asin));
                             let bulkMessage = `🎯 *A2A EU Bulk Deals* (${selectedOpps.length} items)\n\n`;
                             let totalProfit = 0;
                             
-                            selectedOpps.forEach((opp, index) => {
+                            selectedOpps.forEach((opp: any, index: any) => {
                               totalProfit += opp.bestOpportunity?.profit || 0;
                               const storefrontInfo = formatStorefrontsText(opp.storefronts);
                               bulkMessage += `${index + 1}. *${opp.productName}*\n`;
@@ -1542,7 +1542,7 @@ function A2AEUPageContent() {
                   );
                 }
                 
-                return filteredOpportunities.map((opp, index) => {
+                return filteredOpportunities.map((opp: any, index: any) => {
                   const isProfitable = opp.bestOpportunity?.profit > 0;
                   
                   return (
@@ -2031,7 +2031,7 @@ function A2AEUPageContent() {
                         <span className="text-sm font-normal text-gray-500">({opp.euPrices?.length || 0} MARKETS)</span>
                       </h4>
                       <div className="grid grid-cols-2 gap-3">
-                        {(opp.euPrices || []).map((euPrice, idx) => {
+                        {(opp.euPrices || []).map((euPrice: any, idx: any) => {
                           const isProfitable = (euPrice.profit || 0) > 0;
                           const isBest = euPrice.marketplace === opp.bestOpportunity?.marketplace;
                           
@@ -2187,7 +2187,7 @@ function A2AEUPageContent() {
           setShowSourcingListModal(false)
           setSelectedDeals(new Set()) // Clear selection after closing modal
         }}
-        selectedDeals={sortedOpportunities.filter(opp => selectedDeals.has(opp.asin))}
+        selectedDeals={sortedOpportunities.filter((opp: any) => selectedDeals.has(opp.asin))}
         addedFrom="a2a_eu"
       />
 

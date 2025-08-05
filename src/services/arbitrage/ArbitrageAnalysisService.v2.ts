@@ -207,7 +207,7 @@ export class ArbitrageAnalysisServiceV2 implements IArbitrageService {
 
   private async analyzeBatch(products: Product[]): Promise<ArbitrageOpportunity[]> {
     const opportunities: ArbitrageOpportunity[] = [];
-    const asins = products.map(p => p.asin);
+    const asins = products.map((p: any) => p.asin);
 
     try {
       // Get UK pricing for all products in batch
@@ -215,8 +215,8 @@ export class ArbitrageAnalysisServiceV2 implements IArbitrageService {
 
       // Get EU pricing for all marketplaces
       const euPricingPromises = Object.entries(MARKETPLACES)
-        .filter(([key]) => key !== 'UK')
-        .map(async ([key, marketplace]) => ({
+        .filter(([key]: any) => key !== 'UK')
+        .map(async ([key, marketplace]: any) => ({
           marketplace: key,
           pricing: await this.pricingService.getCompetitivePricing(asins, marketplace.id)
         }));

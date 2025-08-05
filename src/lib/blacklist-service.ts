@@ -25,7 +25,7 @@ export class BlacklistService {
         return new Set();
       }
 
-      return new Set(data?.map(item => item.asin) || []);
+      return new Set(data?.map((item: any) => item.asin) || []);
     } catch (error) {
       console.error('Error in getBlacklistedAsins:', error);
       return new Set();
@@ -63,7 +63,7 @@ export class BlacklistService {
     products: T[],
     blacklistedAsins: Set<string>
   ): { filteredProducts: T[]; excludedCount: number } {
-    const filteredProducts = products.filter(product => 
+    const filteredProducts = products.filter((product: any) => 
       !blacklistedAsins.has(product.asin.toUpperCase())
     );
 

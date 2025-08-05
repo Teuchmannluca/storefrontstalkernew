@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Format response
-    const formattedProducts = products.map(product => {
+    const formattedProducts = products.map((product: any) => {
       // SP-API client transforms the data structure - check both formats
       const competitivePrices = (product.competitivePricing as any)?.CompetitivePrices || product.competitivePricing?.competitivePrices || [];
       const numberOfOfferListings = (product.competitivePricing as any)?.NumberOfOfferListings || product.competitivePricing?.numberOfOfferListings || [];
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
           ...acc,
           [listing.condition]: listing.Count || listing.count
         }), {}),
-        salesRankings: salesRankings.map(rank => ({
+        salesRankings: salesRankings.map((rank: any) => ({
           category: rank.productCategoryId,
           rank: rank.rank
         })),

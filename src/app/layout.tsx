@@ -3,6 +3,10 @@ import { SyncStatusProvider } from '@/contexts/SyncStatusContext'
 import StatusBar from '@/components/StatusBar'
 import './globals.css'
 
+// Force dynamic rendering for the entire app
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export const metadata: Metadata = {
   title: 'Storefront Stalker',
   description: 'Track and monitor Amazon storefronts',
