@@ -20,12 +20,14 @@ import {
   XCircleIcon,
   ShoppingBagIcon,
   BuildingStorefrontIcon,
-  NoSymbolIcon
+  NoSymbolIcon,
+  FolderPlusIcon
 } from '@heroicons/react/24/outline'
 import { Fragment } from 'react'
 import { Listbox, Transition } from '@headlessui/react'
 import { useBlacklist } from '@/hooks/useBlacklist'
 import SourcingListModal from '@/components/SourcingListModal'
+import AddToASINListModal from '@/components/AddToASINListModal'
 import { StorefrontDisplay, formatStorefrontsText } from '@/lib/storefront-formatter'
 
 // Exchange rate constant
@@ -113,6 +115,9 @@ function A2AEUPageContent() {
   
   // Sourcing list modal state
   const [showSourcingListModal, setShowSourcingListModal] = useState(false)
+  
+  // ASIN list modal state
+  const [showASINListModal, setShowASINListModal] = useState(false)
 
   // Blacklist functionality
   const { blacklistAsin, isLoading: isBlacklisting, error: blacklistError, success: blacklistSuccess, clearMessages } = useBlacklist()
@@ -1470,6 +1475,17 @@ function A2AEUPageContent() {
                         </button>
                         <button
                           onClick={() => {
+                            if (selectedDeals.size > 0) {
+                              setShowASINListModal(true)
+                            }
+                          }}
+                          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors flex items-center gap-2"
+                        >
+                          <FolderPlusIcon className="w-4 h-4" />
+                          Add ASINs to List
+                        </button>
+                        <button
+                          onClick={() => {
                             const selectedOpps = sortedOpportunities.filter((opp: any) => selectedDeals.has(opp.asin));
                             let bulkMessage = `🎯 *A2A EU Bulk Deals* (${selectedOpps.length} items)\n\n`;
                             let totalProfit = 0;
@@ -1961,6 +1977,19 @@ function A2AEUPageContent() {
                             Add to List
                           </button>
 
+                          {/* Add to ASIN List Button */}
+                          <button
+                            onClick={() => {
+                              // Set the current opportunity as selected and open ASIN modal
+                              setSelectedDeals(new Set([opp.asin]))
+                              setShowASINListModal(true)
+                            }}
+                            className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors flex items-center gap-1"
+                          >
+                            <FolderPlusIcon className="w-4 h-4" />
+                            Add ASIN
+                          </button>
+
                           {/* WhatsApp Share Button */}
                           <button
                             onClick={() => {
@@ -2189,6 +2218,24 @@ function A2AEUPageContent() {
         }}
         selectedDeals={sortedOpportunities.filter((opp: any) => selectedDeals.has(opp.asin))}
         addedFrom="a2a_eu"
+      />
+
+      {/* Add to ASIN List Modal */}
+      <AddToASINListModal
+        isOpen={showASINListModal}
+        onClose={() => {
+          setShowASINListModal(false)
+          setSelectedDeals(new Set()) // Clear selection after closing modal
+        }}
+        asins={Array.from(selectedDeals)}
+        productNames={
+          sortedOpportunities
+            .filter((opp: any) => selectedDeals.has(opp.asin))
+            .reduce((acc: { [key: string]: string }, opp: any) => {
+              acc[opp.asin] = opp.productName
+              return acc
+            }, {})
+        }
       />
 
       <AddStorefrontModal
