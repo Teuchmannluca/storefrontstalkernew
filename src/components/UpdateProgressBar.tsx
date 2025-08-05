@@ -10,33 +10,42 @@ import {
   CpuChipIcon
 } from '@heroicons/react/24/outline'
 
-interface QueueStatus {
+interface BatchProgress {
   isProcessing: boolean
-  totalQueued: number
-  processing: number
-  completed: number
-  errors: number
-  availableTokens: number
+  totalStorefronts: number
+  processedStorefronts: number
+  currentBatch: number
+  totalBatches: number
+  currentStorefronts: string[]
+  completedStorefronts: {
+    id: string
+    name: string
+    productsAdded: number
+    productsRemoved: number
+    success: boolean
+    error?: string
+  }[]
+  tokensUsed: number
+  tokensAvailable: number
+  startTime: string
+  estimatedCompletion?: string
 }
 
-interface UpdateQueueItem {
-  id: string
-  storefront_id: string
-  status: 'pending' | 'processing' | 'completed' | 'error'
-  keepa_tokens_used?: number
-  products_added?: number
-  products_removed?: number
-  error_message?: string
-  started_at?: string
-  completed_at?: string
-  storefronts: {
-    name: string
-  }
+interface EnrichmentQueue {
+  pending: number
+  processing: number
+  completed: number
+  error: number
+  total: number
+}
+
+interface BatchStatus {
+  batch: BatchProgress | null
+  enrichment: EnrichmentQueue
 }
 
 export default function UpdateProgressBar() {
-  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null)
-  const [queueItems, setQueueItems] = useState<UpdateQueueItem[]>([])
+  const [batchStatus, setBatchStatus] = useState<BatchStatus | null>(null)
   const [isVisible, setIsVisible] = useState(false)
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
 
@@ -48,8 +57,8 @@ export default function UpdateProgressBar() {
         const { data: { session } } = await supabase.auth.getSession()
         if (!session?.access_token) return
 
-        // Get overall queue status
-        const statusResponse = await fetch('/api/storefronts/update-all', {
+        // Get batch status
+        const statusResponse = await fetch('/api/batch-status', {
           headers: {
             'Authorization': `Bearer ${session.access_token}`
           }
@@ -57,37 +66,22 @@ export default function UpdateProgressBar() {
 
         if (statusResponse.ok) {
           const status = await statusResponse.json()
-          setQueueStatus(status)
-        }
-
-        // Get detailed queue items
-        const { data: items, error } = await supabase
-          .from('storefront_update_queue')
-          .select(`
-            *,
-            storefronts (
-              name
-            )
-          `)
-          .order('created_at', { ascending: true })
-
-        if (!error && items) {
-          setQueueItems(items)
-          setIsVisible(items.length > 0)
+          setBatchStatus(status)
+          setIsVisible(status.batch?.isProcessing || status.enrichment.pending > 0 || status.enrichment.processing > 0)
           setLastUpdate(new Date())
         }
 
       } catch (error) {
-        console.error('Error fetching update status:', error)
+        console.error('Error fetching batch status:', error)
       }
     }
 
     // Initial fetch
     fetchStatus()
 
-    // Poll every 5 seconds when there's activity
-    if (queueStatus?.isProcessing || (queueStatus?.totalQueued && queueStatus.totalQueued > 0)) {
-      pollInterval = setInterval(fetchStatus, 5000)
+    // Poll every 2 seconds when there's activity
+    if (batchStatus?.batch?.isProcessing || batchStatus?.enrichment.pending || batchStatus?.enrichment.processing) {
+      pollInterval = setInterval(fetchStatus, 2000)
     } else {
       pollInterval = setInterval(fetchStatus, 30000) // Less frequent when idle
     }
@@ -95,30 +89,34 @@ export default function UpdateProgressBar() {
     return () => {
       if (pollInterval) clearInterval(pollInterval)
     }
-  }, [queueStatus?.isProcessing, queueStatus?.totalQueued])
+  }, [batchStatus?.batch?.isProcessing, batchStatus?.enrichment.pending, batchStatus?.enrichment.processing])
 
   // Auto-hide after completion
   useEffect(() => {
-    if (queueStatus && !queueStatus.isProcessing && queueStatus.totalQueued === queueStatus.completed + queueStatus.errors) {
+    if (batchStatus?.batch && !batchStatus.batch.isProcessing && batchStatus.enrichment.pending === 0 && batchStatus.enrichment.processing === 0) {
       const timer = setTimeout(() => {
         setIsVisible(false)
-      }, 10000) // Hide after 10 seconds
+        setBatchStatus(null) // Clear the status to fully reset the component
+      }, 5000) // Hide after 5 seconds
 
       return () => clearTimeout(timer)
     }
-  }, [queueStatus])
+  }, [batchStatus])
 
-  if (!isVisible || !queueStatus || (queueStatus.totalQueued || 0) === 0) {
+  if (!isVisible || !batchStatus) {
     return null
   }
 
-  const progressPercentage = (queueStatus.totalQueued || 0) > 0 
-    ? (((queueStatus.completed || 0) + (queueStatus.errors || 0)) / (queueStatus.totalQueued || 1)) * 100
+  const batch = batchStatus.batch
+  const enrichment = batchStatus.enrichment
+  
+  // Calculate progress percentage
+  const progressPercentage = batch && batch.totalStorefronts > 0
+    ? (batch.processedStorefronts / batch.totalStorefronts) * 100
     : 0
-
-  const currentItem = queueItems.find(item => item.status === 'processing')
-  const completedItems = queueItems.filter(item => item.status === 'completed')
-  const errorItems = queueItems.filter(item => item.status === 'error')
+    
+  const isProcessing = batch?.isProcessing || enrichment.processing > 0
+  const hasActivity = isProcessing || enrichment.pending > 0
 
   return (
     <div className="fixed bottom-4 right-4 w-96 bg-white rounded-xl shadow-lg border border-gray-200 z-50">
@@ -126,30 +124,55 @@ export default function UpdateProgressBar() {
       <div className="px-4 py-3 border-b border-gray-100">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-            <ArrowPathIcon className={`w-5 h-5 ${queueStatus.isProcessing ? 'animate-spin text-blue-500' : 'text-gray-400'}`} />
-            Storefront Updates
+            <ArrowPathIcon className={`w-5 h-5 ${isProcessing ? 'animate-spin text-blue-500' : 'text-gray-400'}`} />
+            {batch?.isProcessing ? 'Storefront Updates' : enrichment.processing > 0 ? 'Title Enrichment' : 'Updates Complete'}
           </h3>
           <button 
-            onClick={() => setIsVisible(false)}
+            onClick={async () => {
+              setIsVisible(false)
+              setBatchStatus(null) // Clear the status when manually closed
+              
+              // Also clear server-side progress
+              try {
+                const { data: { session } } = await supabase.auth.getSession()
+                if (session?.access_token) {
+                  await fetch('/api/batch-status', {
+                    method: 'DELETE',
+                    headers: {
+                      'Authorization': `Bearer ${session.access_token}`
+                    }
+                  })
+                }
+              } catch (error) {
+                console.error('Error clearing batch status:', error)
+              }
+            }}
             className="text-gray-400 hover:text-gray-600 text-xl leading-none"
           >
             ×
           </button>
         </div>
         
-        {/* Progress Bar */}
-        <div className="mt-2">
-          <div className="flex justify-between text-sm text-gray-600 mb-1">
-            <span>{(queueStatus.completed || 0) + (queueStatus.errors || 0)} of {queueStatus.totalQueued || 0} completed</span>
-            <span>{Math.round(progressPercentage)}%</span>
+        {/* Batch Progress Bar */}
+        {batch && (
+          <div className="mt-2">
+            <div className="flex justify-between text-sm text-gray-600 mb-1">
+              <span>{batch.processedStorefronts} of {batch.totalStorefronts} storefronts</span>
+              <span>{Math.round(progressPercentage)}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${progressPercentage}%` }}
+              />
+            </div>
+            {batch.totalBatches > 1 && (
+              <div className="text-xs text-gray-500 mt-1">
+                Batch {batch.currentBatch} of {batch.totalBatches}
+              </div>
+            )}
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div 
-              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${progressPercentage}%` }}
-            />
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Token Status */}
@@ -159,24 +182,47 @@ export default function UpdateProgressBar() {
             <CpuChipIcon className="w-4 h-4 text-gray-500" />
             <span className="text-gray-600">Keepa Tokens:</span>
           </div>
-          <span className={`font-medium ${(queueStatus.availableTokens || 0) > 50 ? 'text-green-600' : 'text-amber-600'}`}>
-            {queueStatus.availableTokens || 0} available
+          <span className={`font-medium ${(batch?.tokensAvailable || 0) > 50 ? 'text-green-600' : 'text-amber-600'}`}>
+            {batch?.tokensAvailable || 0} available
           </span>
         </div>
+        {batch?.tokensUsed && batch.tokensUsed > 0 && (
+          <div className="text-xs text-gray-500 mt-1">
+            Used {batch.tokensUsed} tokens this batch
+          </div>
+        )}
       </div>
 
       {/* Current Processing */}
-      {currentItem && (
+      {batch?.isProcessing && batch.currentStorefronts.length > 0 && (
         <div className="px-4 py-3 border-b border-gray-100">
           <div className="flex items-center gap-2 mb-2">
             <ArrowPathIcon className="w-4 h-4 animate-spin text-blue-500" />
-            <span className="font-medium text-gray-900">Currently Processing</span>
+            <span className="font-medium text-gray-900">Processing Batch {batch.currentBatch}</span>
+          </div>
+          <div className="text-sm text-gray-600 space-y-1">
+            {batch.currentStorefronts.map((name, index) => (
+              <div key={index} className="font-medium truncate">{name}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Title Enrichment Status */}
+      {enrichment.total > 0 && (
+        <div className="px-4 py-3 border-b border-gray-100">
+          <div className="flex items-center gap-2 mb-2">
+            <ArrowPathIcon className={`w-4 h-4 ${enrichment.processing > 0 ? 'animate-spin text-blue-500' : 'text-gray-400'}`} />
+            <span className="font-medium text-gray-900">Title Enrichment</span>
           </div>
           <div className="text-sm text-gray-600">
-            <div className="font-medium">{currentItem.storefronts.name}</div>
-            {currentItem.started_at && (
+            <div className="flex justify-between">
+              <span>Progress:</span>
+              <span>{enrichment.completed} / {enrichment.total} titles</span>
+            </div>
+            {enrichment.pending > 0 && (
               <div className="text-xs text-gray-500 mt-1">
-                Started {new Date(currentItem.started_at).toLocaleTimeString()}
+                {enrichment.pending} pending, {enrichment.processing} processing
               </div>
             )}
           </div>
@@ -186,44 +232,23 @@ export default function UpdateProgressBar() {
       {/* Recent Completions */}
       <div className="px-4 py-3 max-h-40 overflow-y-auto">
         <div className="space-y-2">
-          {completedItems.slice(-3).map((item) => (
-            <div key={item.id} className="flex items-center gap-2 text-sm">
-              <CheckCircleIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
+          {batch?.completedStorefronts.slice(-4).map((storefront, index) => (
+            <div key={index} className="flex items-center gap-2 text-sm">
+              {storefront.success ? (
+                <CheckCircleIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
+              ) : (
+                <ExclamationCircleIcon className="w-4 h-4 text-red-500 flex-shrink-0" />
+              )}
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-gray-900 truncate">
-                  {item.storefronts.name}
+                  {storefront.name}
                 </div>
-                <div className="text-xs text-gray-500">
-                  +{item.products_added || 0} products, -{item.products_removed || 0} products
-                  {item.keepa_tokens_used && ` • ${item.keepa_tokens_used} tokens`}
-                </div>
-              </div>
-            </div>
-          ))}
-
-          {errorItems.slice(-2).map((item) => (
-            <div key={item.id} className="flex items-center gap-2 text-sm">
-              <ExclamationCircleIcon className="w-4 h-4 text-red-500 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-gray-900 truncate">
-                  {item.storefronts.name}
-                </div>
-                <div className="text-xs text-red-600 truncate">
-                  {item.error_message || 'Update failed'}
-                </div>
-              </div>
-            </div>
-          ))}
-
-          {queueItems.filter(item => item.status === 'pending').slice(0, 2).map((item) => (
-            <div key={item.id} className="flex items-center gap-2 text-sm">
-              <ClockIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-gray-600 truncate">
-                  {item.storefronts.name}
-                </div>
-                <div className="text-xs text-gray-500">
-                  Waiting in queue
+                <div className={`text-xs ${storefront.success ? 'text-gray-500' : 'text-red-600'}`}>
+                  {storefront.success ? (
+                    `+${storefront.productsAdded} products, -${storefront.productsRemoved} products`
+                  ) : (
+                    storefront.error || 'Update failed'
+                  )}
                 </div>
               </div>
             </div>
@@ -232,20 +257,20 @@ export default function UpdateProgressBar() {
       </div>
 
       {/* Summary Footer */}
-      {!queueStatus.isProcessing && (queueStatus.totalQueued || 0) > 0 && (
+      {!isProcessing && hasActivity && (
         <div className="px-4 py-3 bg-gray-50 rounded-b-xl">
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-4">
-              {(queueStatus.completed || 0) > 0 && (
+              {batch && batch.completedStorefronts.length > 0 && (
                 <span className="text-green-600 flex items-center gap-1">
                   <CheckCircleIcon className="w-4 h-4" />
-                  {queueStatus.completed || 0} completed
+                  {batch.completedStorefronts.filter(s => s.success).length} completed
                 </span>
               )}
-              {(queueStatus.errors || 0) > 0 && (
-                <span className="text-red-600 flex items-center gap-1">
-                  <ExclamationCircleIcon className="w-4 h-4" />
-                  {queueStatus.errors || 0} failed
+              {enrichment.completed > 0 && (
+                <span className="text-blue-600 flex items-center gap-1">
+                  <ArrowPathIcon className="w-4 h-4" />
+                  {enrichment.completed} titles enriched
                 </span>
               )}
             </div>

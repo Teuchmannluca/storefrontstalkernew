@@ -53,7 +53,17 @@ export async function middleware(request: NextRequest) {
       request.nextUrl.pathname.startsWith(endpoint)
     )
     
-    if (!isPublicEndpoint && (!user || error)) {
+    // Check for service role authentication
+    const authHeader = request.headers.get('authorization')
+    const isServiceRole = authHeader && 
+      authHeader.startsWith('Bearer ') && 
+      authHeader.substring(7) === process.env.SUPABASE_SERVICE_ROLE_KEY
+    
+    // Check for cron secret
+    const cronSecret = request.headers.get('x-cron-secret')
+    const isCronRequest = cronSecret === process.env.CRON_SECRET
+    
+    if (!isPublicEndpoint && !isServiceRole && !isCronRequest && (!user || error)) {
       return NextResponse.json(
         { error: 'Authentication required' }, 
         { status: 401 }

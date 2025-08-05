@@ -27,6 +27,7 @@ import { Fragment } from 'react'
 import { Listbox, Transition } from '@headlessui/react'
 import { useBlacklist } from '@/hooks/useBlacklist'
 import SourcingListModal from '@/components/SourcingListModal'
+import { StorefrontDisplay, formatStorefrontsText } from '@/lib/storefront-formatter'
 
 interface SavedScan {
   id: string
@@ -911,9 +912,7 @@ export default function RecentScansPage() {
                                 <h3 className="font-semibold text-gray-900 text-lg line-clamp-2 mb-2">{opp.productName}</h3>
                                 <div className="flex items-center gap-4 text-sm text-gray-500">
                                   <span>{opp.asin}</span>
-                                  {opp.storefronts && opp.storefronts.length > 0 && (
-                                    <span className="text-indigo-600">@ {opp.storefronts[0].name}</span>
-                                  )}
+                                  <StorefrontDisplay storefronts={opp.storefronts} />
                                 </div>
                                 
                                 {/* Sales and Rank Info */}
@@ -1279,9 +1278,11 @@ export default function RecentScansPage() {
                                 {/* WhatsApp Share Button */}
                                 <button
                                   onClick={() => {
+                                    const storefrontInfo = formatStorefrontsText(opp.storefronts);
                                     const message = encodeURIComponent(
                                       `🎯 **Luca is the best Deal**\n\n` +
                                       `🛍️ **${opp.productName}** (${opp.asin})\n` +
+                                      (storefrontInfo ? `🏪 **${storefrontInfo}**\n` : '') +
                                       `💰 **Profit: £${(opp.bestOpportunity?.profit || 0).toFixed(2)}** (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
                                       `📍 Buy: Amazon ${opp.bestOpportunity?.marketplace || 'EU'} - £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)}\n` +
                                       `🇬🇧 Sell: Amazon UK - £${(opp.targetPrice || 0).toFixed(2)}\n\n` +

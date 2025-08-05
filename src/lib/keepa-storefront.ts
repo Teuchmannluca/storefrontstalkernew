@@ -10,6 +10,12 @@ interface SellerInfo {
 interface KeepaSellerSearchResult {
   asinList: string[];
   totalResults: number;
+  tokenInfo?: {
+    tokensLeft: number;
+    tokensConsumed: number;
+    tokenFlowReduction: number;
+    timestamp: number;
+  };
 }
 
 export class KeepaStorefrontAPI {
@@ -54,9 +60,19 @@ export class KeepaStorefrontAPI {
         const sellerIds = Object.keys(response.data.sellers);
         if (sellerIds.length > 0) {
           const sellerData = response.data.sellers[sellerIds[0]];
+          
+          // Extract token information from response
+          const tokenInfo = response.data.tokensLeft !== undefined ? {
+            tokensLeft: response.data.tokensLeft,
+            tokensConsumed: response.data.tokensConsumed || 0,
+            tokenFlowReduction: response.data.tokenFlowReduction || 0,
+            timestamp: response.data.timestamp || Date.now()
+          } : undefined;
+          
           return {
             asinList: sellerData.asinList || [],
-            totalResults: sellerData.totalStorefrontAsins?.[1] || sellerData.asinList?.length || 0
+            totalResults: sellerData.totalStorefrontAsins?.[1] || sellerData.asinList?.length || 0,
+            tokenInfo
           };
         }
       }

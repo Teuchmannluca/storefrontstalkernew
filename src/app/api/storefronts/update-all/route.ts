@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, unauthorizedResponse, serverErrorResponse } from '@/lib/auth-helpers'
 import { KeepaUpdateManager } from '@/lib/keepa-update-manager'
+import { KeepaBatchUpdateManager } from '@/lib/keepa-batch-update-manager'
+import { updateBatchProgress, completeBatchProgress } from '@/lib/batch-progress-tracker'
 
 // Global processing state to prevent multiple concurrent updates
 let isProcessing = false
 
 export async function POST(request: NextRequest) {
-  console.log('🚀 Update All endpoint called')
+  console.log('🚀 Fast Batch Update All endpoint called')
   try {
+    // Parse request body for options
+    const body = await request.json().catch(() => ({}))
+    const { fetchTitles = false } = body
+    
     // Verify authentication
     const { user, supabase } = await requireAuth()
     console.log('👤 User authenticated:', user?.id)
@@ -47,23 +53,21 @@ export async function POST(request: NextRequest) {
       }, { status: 200 })
     }
 
-    // Initialize update manager
-    console.log('🔧 Initializing KeepaUpdateManager...')
-    let updateManager: KeepaUpdateManager
+    // Initialize batch update manager
+    console.log('🔧 Initializing KeepaBatchUpdateManager...')
+    let batchManager: KeepaBatchUpdateManager
     try {
-      updateManager = new KeepaUpdateManager(user.id)
-      console.log('✅ KeepaUpdateManager initialized')
+      batchManager = new KeepaBatchUpdateManager(user.id)
+      console.log('✅ KeepaBatchUpdateManager initialized')
     } catch (error) {
-      console.error('❌ Error initializing KeepaUpdateManager:', error)
+      console.error('❌ Error initializing KeepaBatchUpdateManager:', error)
       throw error
     }
 
     // Check token availability
     console.log('🪙 Checking token availability...')
-    const tokenStatus = await updateManager.getQueueStatus()
+    const tokenStatus = await batchManager.getTokenStatus()
     console.log('Token status:', tokenStatus)
-    const tokensNeeded = storefronts.length * 50 // 50 tokens per storefront
-    console.log(`🪙 Need ${tokensNeeded} tokens, have ${tokenStatus.availableTokens}`)
     
     // Check if we have enough tokens to start (at least 1 storefront)
     if (tokenStatus.availableTokens < 50) {
@@ -80,56 +84,164 @@ export async function POST(request: NextRequest) {
       }, { status: 429 })
     }
 
-    console.log(`✅ Queueing all ${storefronts.length} storefronts for gradual processing`)
-
-    // Queue ALL storefronts - the system will process them as tokens become available
     const storefrontIds = storefronts.map(s => s.id)
-    await updateManager.queueStorefrontUpdates(storefrontIds)
     
-    // Start processing in background
+    // Start fast batch processing in background
     setImmediate(async () => {
       isProcessing = true
       try {
-        console.log(`Starting gradual update process for ${storefronts.length} storefronts`)
-        const results = await updateManager.processQueue()
+        console.log(`🚀 Starting fast batch processing for up to ${tokenStatus.maxStorefrontsNow} storefronts`)
         
-        const successful = results.filter(r => r.success).length
-        const failed = results.filter(r => !r.success).length
-        const totalProductsAdded = results.reduce((sum, r) => sum + r.productsAdded, 0)
-        const totalProductsRemoved = results.reduce((sum, r) => sum + r.productsRemoved, 0)
-        const totalTokensUsed = results.reduce((sum, r) => sum + r.tokensUsed, 0)
+        // Initialize progress tracking
+        const totalBatches = Math.ceil(storefronts.length / tokenStatus.maxStorefrontsNow)
+        updateBatchProgress(user.id, {
+          isProcessing: true,
+          totalStorefronts: storefronts.length,
+          processedStorefronts: 0,
+          currentBatch: 0,
+          totalBatches,
+          currentStorefronts: [],
+          completedStorefronts: [],
+          tokensUsed: 0,
+          tokensAvailable: tokenStatus.availableTokens,
+          startTime: new Date()
+        })
         
-        console.log(`Update process completed: ${successful} successful, ${failed} failed`)
-        console.log(`Products: +${totalProductsAdded}, -${totalProductsRemoved}, Tokens: ${totalTokensUsed}`)
+        let remainingStorefronts = [...storefrontIds]
+        let totalResults: any[] = []
+        let batchCount = 1
         
-        const processed = successful + failed
-        if (processed < storefronts.length) {
-          const remaining = storefronts.length - processed
-          console.log(`ℹ️ ${remaining} storefronts remaining (will process as tokens become available)`)
+        // Process in batches as tokens become available
+        while (remainingStorefronts.length > 0) {
+          const currentTokenStatus = await batchManager.getTokenStatus()
+          
+          if (currentTokenStatus.maxStorefrontsNow === 0) {
+            console.log(`⏳ Waiting ${currentTokenStatus.timeToNext50Tokens} minutes for more tokens...`)
+            await new Promise(resolve => setTimeout(resolve, currentTokenStatus.timeToNext50Tokens * 60 * 1000))
+            continue
+          }
+          
+          const batchSize = Math.min(currentTokenStatus.maxStorefrontsNow, remainingStorefronts.length)
+          const currentBatch = remainingStorefronts.slice(0, batchSize)
+          remainingStorefronts = remainingStorefronts.slice(batchSize)
+          
+          // Update progress - starting batch
+          const currentStorefrontNames = storefronts
+            .filter(s => currentBatch.includes(s.id))
+            .map(s => s.name)
+          
+          updateBatchProgress(user.id, {
+            currentBatch: batchCount,
+            currentStorefronts: currentStorefrontNames,
+            tokensAvailable: currentTokenStatus.availableTokens
+          })
+          
+          console.log(`🔥 Processing batch ${batchCount}: ${batchSize} storefronts in parallel`)
+          
+          const batchResults = await batchManager.processBatchUpdate(currentBatch, { 
+            fetchTitlesImmediately: fetchTitles 
+          })
+          totalResults.push(...batchResults)
+          
+          // Update progress - batch completed
+          const completedStorefronts = batchResults.map(result => ({
+            id: result.storefrontId,
+            name: result.storefrontName,
+            productsAdded: result.productsAdded,
+            productsRemoved: result.productsRemoved,
+            success: result.success,
+            error: result.error
+          }))
+          
+          // Get updated token status from the batch manager
+          const updatedTokenStatus = await batchManager.getTokenStatus()
+          
+          updateBatchProgress(user.id, {
+            processedStorefronts: totalResults.length,
+            tokensUsed: totalResults.reduce((sum, r) => sum + r.tokensUsed, 0),
+            tokensAvailable: updatedTokenStatus.availableTokens,
+            currentStorefronts: [],
+            completedStorefronts: totalResults.map(result => ({
+              id: result.storefrontId,
+              name: result.storefrontName,
+              productsAdded: result.productsAdded,
+              productsRemoved: result.productsRemoved,
+              success: result.success,
+              error: result.error
+            }))
+          })
+          
+          const successful = batchResults.filter(r => r.success).length
+          const failed = batchResults.filter(r => !r.success).length
+          const productsAdded = batchResults.reduce((sum, r) => sum + r.productsAdded, 0)
+          const productsRemoved = batchResults.reduce((sum, r) => sum + r.productsRemoved, 0)
+          
+          console.log(`✅ Batch ${batchCount} completed: ${successful} successful, ${failed} failed`)
+          console.log(`📊 Batch ${batchCount}: +${productsAdded} products, -${productsRemoved} products`)
+          
+          batchCount++
+          
+          // Small delay between batches
+          if (remainingStorefronts.length > 0) {
+            await new Promise(resolve => setTimeout(resolve, 2000))
+          }
         }
         
-        // Clean up completed queue items after 1 hour
-        setTimeout(async () => {
-          await updateManager.clearCompletedUpdates()
-        }, 60 * 60 * 1000)
+        const totalSuccessful = totalResults.filter(r => r.success).length
+        const totalFailed = totalResults.filter(r => !r.success).length
+        const totalProductsAdded = totalResults.reduce((sum, r) => sum + r.productsAdded, 0)
+        const totalProductsRemoved = totalResults.reduce((sum, r) => sum + r.productsRemoved, 0)
+        const totalTokensUsed = totalResults.reduce((sum, r) => sum + r.tokensUsed, 0)
+        
+        console.log(`🎉 All batches completed!`)
+        console.log(`📈 Total: ${totalSuccessful} successful, ${totalFailed} failed`)
+        console.log(`📊 Total: +${totalProductsAdded} products, -${totalProductsRemoved} products`)
+        console.log(`🪙 Total tokens used: ${totalTokensUsed}`)
+        
+        // Complete batch progress
+        completeBatchProgress(user.id)
+        
+        // Auto-trigger background title enrichment if products were added and not fetched immediately
+        if (totalProductsAdded > 0 && !fetchTitles) {
+          console.log(`🔍 Auto-triggering background title enrichment for ${totalProductsAdded} new products`)
+          
+          // Trigger enrichment in separate async process to avoid blocking
+          setImmediate(async () => {
+            try {
+              const enrichmentResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/enrich-titles`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`
+                }
+              })
+              
+              if (enrichmentResponse.ok) {
+                console.log(`✅ Background title enrichment started automatically`)
+              } else {
+                const errorText = await enrichmentResponse.text()
+                console.log(`⚠️ Failed to start background enrichment: ${enrichmentResponse.status} - ${errorText}`)
+              }
+            } catch (error) {
+              console.error(`❌ Error triggering enrichment:`, error)
+            }
+          })
+        }
         
       } catch (error) {
-        console.error('Error in background update process:', error)
+        console.error('❌ Error in fast batch update process:', error)
       } finally {
         isProcessing = false
       }
     })
-
-    const estimatedMinutes = Math.ceil((tokensNeeded - tokenStatus.availableTokens) / 22)
     
     return NextResponse.json({ 
-      message: `Update process started for all ${storefronts.length} storefronts. Processing gradually as tokens become available.`,
-      queued: storefronts.length,
+      message: `Fast batch update started! Processing up to ${tokenStatus.maxStorefrontsNow} storefronts in parallel.`,
       totalStorefronts: storefronts.length,
-      tokensRequired: tokensNeeded,
+      maxParallelStorefronts: tokenStatus.maxStorefrontsNow,
       tokensAvailable: tokenStatus.availableTokens,
-      estimatedTokensPerMinute: 22,
-      estimatedCompletionMinutes: estimatedMinutes,
+      fetchTitles: fetchTitles,
+      estimatedBatchTime: fetchTitles ? '30-60 seconds per batch' : '5-10 seconds per batch',
       storefronts: storefronts.map(s => ({ id: s.id, name: s.name }))
     }, { status: 200 })
 
@@ -142,7 +254,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Add GET endpoint to check queue status
+// Add GET endpoint to check batch status
 export async function GET(request: NextRequest) {
   try {
     const { user } = await requireAuth()
@@ -151,16 +263,18 @@ export async function GET(request: NextRequest) {
       return unauthorizedResponse()
     }
 
-    const updateManager = new KeepaUpdateManager(user.id)
-    const status = await updateManager.getQueueStatus()
+    const batchManager = new KeepaBatchUpdateManager(user.id)
+    const tokenStatus = await batchManager.getTokenStatus()
+    const enrichmentStatus = await batchManager.getEnrichmentQueueStatus()
 
     return NextResponse.json({
       isProcessing,
-      ...status
+      tokens: tokenStatus,
+      enrichmentQueue: enrichmentStatus
     })
 
   } catch (error) {
-    console.error('Error getting queue status:', error)
-    return serverErrorResponse('Failed to get queue status')
+    console.error('Error getting batch status:', error)
+    return serverErrorResponse('Failed to get batch status')
   }
 }

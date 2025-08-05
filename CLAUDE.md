@@ -45,14 +45,22 @@ node test-fees-api.js           # Test fees calculation API
 node test-specific-asin.js      # Test single ASIN processing
 node test-fees-comprehensive.js # Comprehensive fees testing
 node test-live-api.js          # Test live API connections
+node test-debug-auth.js        # Test authentication flow
+node test-enrichment-flow.js   # Test title enrichment process
+node test-trigger-enrichment.js # Test enrichment triggering
 ```
+
+## Next.js 15 Compatibility Notes
+- **Route Parameters**: All dynamic route parameters are now Promises that must be awaited
+- **Example**: `{ params }: { params: Promise<{ id: string }> }` then `const { id } = await params`
+- **TypeScript**: Ensure proper typing for async route parameters to avoid build errors
 
 ## Key Architecture Decisions
 
 ### Core Technologies
 - **Next.js 15.4.5** with App Router for server-side rendering and API routes
 - **Supabase** for authentication, database (PostgreSQL), and Row Level Security
-- **TypeScript** for type safety across the codebase
+- **TypeScript** for type safety with decorator support for dependency injection
 - **Vercel** for deployment with cron job scheduling
 - **Tailwind CSS** for styling with Headless UI components
 
@@ -108,10 +116,11 @@ node test-live-api.js          # Test live API connections
 
 ### Product Sync Flow
 1. **Keepa API** fetches ASINs from seller storefront (50 tokens per page)
-2. **Batch Processing**: Process 20 ASINs at a time with SP-API
+2. **Batch Processing**: Process 10-20 ASINs at a time with SP-API (reduced for quota management)
 3. **Rate Limiting**: 500ms delay between requests (1.5s for first 5)
-4. **Error Recovery**: Exponential backoff starting at 60s for quota errors
-5. **Database Updates**: Bulk upsert to products table with conflict handling
+4. **Enhanced Quota Management**: SPAPIQuotaManager tracks daily usage and implements cooldown periods
+5. **Error Recovery**: Exponential backoff starting at 60s for quota errors
+6. **Database Updates**: Bulk upsert to products table with conflict handling
 
 ### Arbitrage Analysis Flow
 1. **ASIN Collection**: Comprehensive collection of all ASINs from all user storefronts
@@ -132,6 +141,18 @@ node test-live-api.js          # Test live API connections
 - **UI**: Dedicated blacklist management page with add/remove functionality
 - **Scope**: Both single seller and all seller scans respect blacklist
 - **Performance**: Efficient Set-based filtering with minimal impact on scan speed
+
+### Sourcing Lists Feature
+- **Purpose**: Save and organize profitable arbitrage opportunities from scans
+- **Key Features**:
+  - Create multiple lists with names and descriptions
+  - Add deals from Recent Scans and A2A EU pages via "Add to List" buttons
+  - Bulk selection and individual item addition support
+  - Automatic profit and item count calculations via database triggers
+  - Individual item deletion with confirmation modal
+  - Favorite lists for quick access
+- **Database**: `sourcing_lists` and `sourcing_list_items` tables with RLS policies
+- **UI Integration**: Buttons placed next to WhatsApp share buttons for easy access
 
 ### Break-Even Deals Feature
 - **Purpose**: Show deals that are neither profitable nor loss-making (around £0 profit)
@@ -161,6 +182,8 @@ node test-live-api.js          # Test live API connections
 - `arbitrage_scans`: Scan history with status tracking and metadata
 - `arbitrage_opportunities`: All deals with profit_category classification (profitable/break-even/loss)
 - `asin_blacklist`: User-specific blacklisted ASINs excluded from scans
+- `sourcing_lists`: User-created lists to organize profitable deals from scans
+- `sourcing_list_items`: Individual arbitrage opportunities saved to sourcing lists
 
 ### Scheduling Tables
 - `user_schedule_settings`: Storefront update scheduling configuration
@@ -183,6 +206,7 @@ node test-live-api.js          # Test live API connections
 6. `add_profit_category_column.sql` (Break-even deals classification)
 7. `create_user_schedule_settings.sql` (storefront update scheduling)
 8. `create_user_arbitrage_schedule_settings.sql` (A2A EU scan scheduling)
+9. `create_sourcing_lists_tables.sql` (Sourcing lists for organizing profitable deals)
 
 ## Common Issues & Solutions
 
@@ -244,6 +268,19 @@ All stored in `.env.local`:
 - `CRON_SECRET` (optional, defaults to 'default-secret')
 - `NEXT_PUBLIC_SITE_URL` (for internal API calls from cron jobs)
 
+## Vercel Deployment Configuration
+- **Region**: CDG1 (Paris)
+- **Function Timeouts**: 300s (5 minutes) for long-running operations:
+  - `/api/arbitrage/analyze-stream`
+  - `/api/sync-products`
+  - `/api/sync-storefront-products`
+  - `/api/catalog/sync-products`
+  - `/api/cron/check-schedules`
+  - `/api/cron/check-arbitrage-schedules`
+- **Cron Jobs**:
+  - Storefront updates: `0 2 * * *` (2:00 AM UTC daily)
+  - Arbitrage scans: `15 3 * * *` (3:15 AM UTC daily)
+
 
 ## API Route Organization
 ```
@@ -267,6 +304,11 @@ All stored in `.env.local`:
 │   ├── competitive/         # Competitive pricing data
 │   ├── offers/             # Product offers
 │   └── offers-batch/       # Batch offers lookup
+├── sourcing-lists/          # Sourcing lists management
+│   ├── route.ts            # List CRUD operations
+│   ├── add-items/          # Bulk add items to lists
+│   ├── [id]/              # Single list operations
+│   └── [id]/items/        # List items management
 ├── storefronts/
 │   └── update-all/         # Update all storefronts
 ├── sync-storefront-keepa/   # Keepa API integration
@@ -301,20 +343,24 @@ All stored in `.env.local`:
 ### Main Dashboard Pages
 - **A2A EU page** (`/dashboard/a2a-eu/`): Single/all seller arbitrage analysis with streaming updates
 - **Recent Scans page** (`/dashboard/recent-scans/`): Historical scan results with profit filtering
+- **Sourcing Lists page** (`/dashboard/sourcing-lists/`): Organize and manage saved arbitrage opportunities
 - **Settings page** (`/dashboard/settings/`): User configuration including both scheduling systems
 - **Blacklist page** (`/dashboard/blacklist/`): ASIN exclusion management
 
 ### Reusable UI Components
 - **SavedScansPanel/SavedScansInline**: Historical scan display with filtering
+- **SourcingListModal**: Modal for adding deals to sourcing lists with create-on-the-fly functionality
 - **Sidebar**: Main navigation with active state management
 - **UpdateProgressBar**: Real-time sync progress display
 - **SyncButton variants**: Immediate sync triggers for storefronts
 
 ## Key Utilities and Libraries
 - **Rate Limiting**: `sp-api-rate-limiter.ts` (token bucket implementation)
+- **Enhanced Quota Management**: `QuotaManager.ts` and `EnhancedRateLimiter.ts` for SP-API quota handling
 - **SP-API Competitive Pricing**: `sp-api-competitive-pricing.ts` (MUST use PascalCase properties)
 - **Sales Estimation**: `sales-estimator.ts` (BSR to monthly sales conversion)
 - **Profit Categorization**: `profit-categorizer.ts` (profitable/break-even/loss classification)
+- **Batch Progress Tracking**: `batch-progress-tracker.ts` for real-time sync progress
 - **Blacklist Service**: `blacklist-service.ts` (efficient ASIN filtering)
 - **Authentication**: `auth.ts` and `validateApiRequest()` for JWT validation
 - **Error Handling**: `error-handling.ts` with streaming-safe error management

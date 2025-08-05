@@ -31,11 +31,12 @@ export async function GET(request: NextRequest) {
     const authHeader = request.headers.get('authorization')
     const userAgent = request.headers.get('user-agent')
     
-    // Check for Vercel cron user agent or allow with correct auth token
+    // Check for system cron user agent or allow with correct auth token
+    const isSystemCron = userAgent?.includes('system-cron')
     const isVercelCron = userAgent?.includes('vercel-cron')
     const hasValidAuth = authHeader === `Bearer ${process.env.CRON_SECRET || 'default-secret'}`
     
-    if (!isVercelCron && !hasValidAuth) {
+    if (!isSystemCron && !isVercelCron && !hasValidAuth) {
       console.log('❌ Unauthorized cron request')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

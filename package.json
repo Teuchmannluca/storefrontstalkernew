@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p ${PORT:-3000} -H ${HOSTNAME:-0.0.0.0}",
+    "start:production": "NODE_ENV=production node .next/standalone/server.js",
     "lint": "next lint",
     "sync:catalog": "node scripts/sync-catalog.js"
   },

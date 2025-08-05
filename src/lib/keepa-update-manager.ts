@@ -514,11 +514,27 @@ export class KeepaUpdateManager {
       } catch (error) {
         console.error(`Error fetching details for ASIN ${asin}:`, error)
         
-        // On rate limit errors, wait longer
-        if (error instanceof Error && error.message.includes('429')) {
-          console.log('Rate limit hit, waiting 60 seconds...')
-          await new Promise(resolve => setTimeout(resolve, 60000))
-          i-- // Retry this ASIN
+        // Handle different types of errors
+        if (error instanceof Error) {
+          const errorMessage = error.message.toLowerCase()
+          const isSocketError = errorMessage.includes('socket hang up') || 
+                               errorMessage.includes('econnreset') ||
+                               errorMessage.includes('etimedout') ||
+                               errorMessage.includes('enotfound')
+          
+          if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+            console.log('Rate limit hit, waiting 60 seconds...')
+            await new Promise(resolve => setTimeout(resolve, 60000))
+            i-- // Retry this ASIN
+          } else if (isSocketError) {
+            console.log(`Socket error for ${asin}, will be retried automatically by SP-API client`)
+            // The SP-API client now has retry logic built-in, so we don't need to retry here
+          } else if (errorMessage.includes('403') || errorMessage.includes('access denied')) {
+            console.error(`Access denied for ASIN ${asin} - check credentials`)
+            // Don't retry access denied errors
+          } else {
+            console.log(`Unexpected error for ${asin}, continuing with next product`)
+          }
         }
       }
     }

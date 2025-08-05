@@ -1,5 +1,4 @@
 import type { Metadata } from 'next'
-import { SpeedInsights } from '@vercel/speed-insights/next'
 import { SyncStatusProvider } from '@/contexts/SyncStatusContext'
 import StatusBar from '@/components/StatusBar'
 import './globals.css'
@@ -21,7 +20,6 @@ export default function RootLayout({
           {children}
           <StatusBar />
         </SyncStatusProvider>
-        <SpeedInsights />
       </body>
     </html>
   )

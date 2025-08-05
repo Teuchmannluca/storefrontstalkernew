@@ -92,74 +92,204 @@ export class AmazonSPAPISimple {
     }
   }
 
-  async getCatalogItem(asin: string): Promise<CatalogItem | null> {
-    try {
-      const accessToken = await this.getAccessToken()
-      
-      const endpoint = this.getRegionEndpoint()
-      const path = `/catalog/2022-04-01/items/${asin}`
-      const params = new URLSearchParams({
-        marketplaceIds: this.config.marketplaceId,
-        includedData: 'attributes,images,salesRanks,summaries'
-      })
+  async getCatalogItem(asin: string, maxRetries: number = 3): Promise<CatalogItem | null> {
+    const baseDelay = 1000 // 1 second base delay
+    let lastError: any
 
-      const url = `https://${endpoint}${path}?${params}`
-      console.log('Calling SP-API:', url)
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const accessToken = await this.getAccessToken()
+        
+        const endpoint = this.getRegionEndpoint()
+        const path = `/catalog/2022-04-01/items/${asin}`
+        const params = new URLSearchParams({
+          marketplaceIds: this.config.marketplaceId,
+          includedData: 'attributes,images,salesRanks,summaries'
+        })
 
-      const response = await axios({
-        method: 'GET',
-        url,
-        headers: {
-          'x-amz-access-token': accessToken,
-          'Content-Type': 'application/json',
-          'User-Agent': 'Storefront-Tracker/1.0'
+        const url = `https://${endpoint}${path}?${params}`
+        if (attempt === 0) {
+          console.log('Calling SP-API:', url)
         }
-      })
 
-      return response.data
-    } catch (error: any) {
-      if (axios.isAxiosError(error)) {
-        console.error('SP-API Error:', error.response?.status, error.response?.data || error.message)
-        if (error.response?.status === 404) {
-          return null // Item not found
+        const response = await axios({
+          method: 'GET',
+          url,
+          headers: {
+            'x-amz-access-token': accessToken,
+            'Content-Type': 'application/json',
+            'User-Agent': 'Storefront-Tracker/1.0',
+            'Connection': 'keep-alive'
+          },
+          timeout: 30000, // 30 second timeout
+          // Connection pool settings for better stability
+          httpsAgent: new (require('https').Agent)({
+            keepAlive: true,
+            keepAliveMsecs: 30000,
+            maxSockets: 10,
+            maxFreeSockets: 5,
+            timeout: 30000,
+            freeSocketTimeout: 15000,
+          })
+        })
+
+        return response.data
+        
+      } catch (error: any) {
+        lastError = error
+        
+        if (axios.isAxiosError(error)) {
+          const status = error.response?.status
+          const code = error.code
+          
+          // Don't retry for these permanent errors
+          if (status === 404) {
+            return null // Item not found
+          }
+          if (status === 403) {
+            console.error('SP-API Access Denied - check credentials and permissions')
+            throw error
+          }
+          if (status === 401) {
+            console.error('SP-API Authentication failed - refreshing token')
+            this.accessToken = undefined // Force token refresh
+            this.tokenExpiry = undefined
+          }
+          
+          // Retry for these temporary errors
+          const shouldRetry = (
+            code === 'ECONNRESET' || 
+            code === 'ETIMEDOUT' || 
+            code === 'ENOTFOUND' ||
+            code === 'ECONNREFUSED' ||
+            status === 429 || // Rate limited
+            status === 500 || // Internal server error
+            status === 502 || // Bad gateway
+            status === 503 || // Service unavailable
+            status === 504    // Gateway timeout
+          )
+          
+          if (!shouldRetry || attempt === maxRetries) {
+            console.error(`SP-API Error (final attempt ${attempt + 1}/${maxRetries + 1}):`, 
+              status || code, error.response?.data || error.message)
+            throw error
+          }
+          
+          // Calculate exponential backoff delay
+          const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000
+          console.warn(`SP-API Error (attempt ${attempt + 1}/${maxRetries + 1}) for ASIN ${asin}:`, 
+            status || code, error.message, `- retrying in ${Math.round(delay)}ms`)
+          
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, delay))
+        } else {
+          // Non-axios error, don't retry
+          console.error('Non-HTTP error fetching catalog item:', error)
+          throw error
         }
       }
-      throw error
     }
+    
+    // This should never be reached, but TypeScript requires it
+    throw lastError
   }
 
-  async searchCatalogItems(identifiers: string[]): Promise<CatalogItem[]> {
-    try {
-      const accessToken = await this.getAccessToken()
-      
-      const endpoint = this.getRegionEndpoint()
-      const path = '/catalog/2022-04-01/items'
-      const params = new URLSearchParams({
-        marketplaceIds: this.config.marketplaceId,
-        identifiers: identifiers.join(','),
-        identifiersType: 'ASIN',
-        includedData: 'attributes,images,salesRanks,summaries'
-      })
+  async searchCatalogItems(identifiers: string[], maxRetries: number = 3): Promise<CatalogItem[]> {
+    const baseDelay = 1000 // 1 second base delay
+    let lastError: any
 
-      const url = `https://${endpoint}${path}?${params}`
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const accessToken = await this.getAccessToken()
+        
+        const endpoint = this.getRegionEndpoint()
+        const path = '/catalog/2022-04-01/items'
+        const params = new URLSearchParams({
+          marketplaceIds: this.config.marketplaceId,
+          identifiers: identifiers.join(','),
+          identifiersType: 'ASIN',
+          includedData: 'attributes,images,salesRanks,summaries'
+        })
 
-      const response = await axios({
-        method: 'GET',
-        url,
-        headers: {
-          'x-amz-access-token': accessToken,
-          'Content-Type': 'application/json',
-          'User-Agent': 'Storefront-Tracker/1.0'
+        const url = `https://${endpoint}${path}?${params}`
+
+        const response = await axios({
+          method: 'GET',
+          url,
+          headers: {
+            'x-amz-access-token': accessToken,
+            'Content-Type': 'application/json',
+            'User-Agent': 'Storefront-Tracker/1.0',
+            'Connection': 'keep-alive'
+          },
+          timeout: 30000, // 30 second timeout
+          // Connection pool settings for better stability
+          httpsAgent: new (require('https').Agent)({
+            keepAlive: true,
+            keepAliveMsecs: 30000,
+            maxSockets: 10,
+            maxFreeSockets: 5,
+            timeout: 30000,
+            freeSocketTimeout: 15000,
+          })
+        })
+
+        return response.data.items || []
+        
+      } catch (error: any) {
+        lastError = error
+        
+        if (axios.isAxiosError(error)) {
+          const status = error.response?.status
+          const code = error.code
+          
+          // Don't retry for these permanent errors
+          if (status === 403) {
+            console.error('SP-API Access Denied - check credentials and permissions')
+            throw error
+          }
+          if (status === 401) {
+            console.error('SP-API Authentication failed - refreshing token')
+            this.accessToken = undefined // Force token refresh
+            this.tokenExpiry = undefined
+          }
+          
+          // Retry for these temporary errors
+          const shouldRetry = (
+            code === 'ECONNRESET' || 
+            code === 'ETIMEDOUT' || 
+            code === 'ENOTFOUND' ||
+            code === 'ECONNREFUSED' ||
+            status === 429 || // Rate limited
+            status === 500 || // Internal server error
+            status === 502 || // Bad gateway
+            status === 503 || // Service unavailable
+            status === 504    // Gateway timeout
+          )
+          
+          if (!shouldRetry || attempt === maxRetries) {
+            console.error(`SP-API Search Error (final attempt ${attempt + 1}/${maxRetries + 1}):`, 
+              status || code, error.response?.data || error.message)
+            throw error
+          }
+          
+          // Calculate exponential backoff delay
+          const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000
+          console.warn(`SP-API Search Error (attempt ${attempt + 1}/${maxRetries + 1}):`, 
+            status || code, error.message, `- retrying in ${Math.round(delay)}ms`)
+          
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, delay))
+        } else {
+          // Non-axios error, don't retry
+          console.error('Non-HTTP error searching catalog items:', error)
+          throw error
         }
-      })
-
-      return response.data.items || []
-    } catch (error: any) {
-      if (axios.isAxiosError(error)) {
-        console.error('SP-API Error:', error.response?.data || error.message)
       }
-      throw error
     }
+    
+    // This should never be reached, but TypeScript requires it
+    throw lastError
   }
 
   // Helper methods remain the same
