@@ -55,6 +55,15 @@ interface EUMarketplacePrice {
   totalCost: number
 }
 
+interface PriceHistoryInfo {
+  oldPrice?: number
+  newPrice: number
+  changeAmount?: number | null
+  changePercentage?: number | null
+  isFirstCheck: boolean
+  lastChecked?: string
+}
+
 interface ArbitrageOpportunity {
   asin: string
   productName: string
@@ -78,6 +87,10 @@ interface ArbitrageOpportunity {
     name: string
     seller_id: string
   }>
+  priceHistory?: {
+    uk: PriceHistoryInfo
+    bestEu: PriceHistoryInfo & { marketplace: string }
+  }
 }
 
 export default function RecentScansPage() {
@@ -454,6 +467,16 @@ export default function RecentScansPage() {
     
     if (diffHours > 0) return `${diffHours}h ${diffMins % 60}m`
     return `${diffMins}m`
+  }
+
+  const getCountryFlag = (marketplace: string) => {
+    const flags: { [key: string]: string } = {
+      'DE': '🇩🇪',
+      'FR': '🇫🇷',
+      'IT': '🇮🇹',
+      'ES': '🇪🇸'
+    }
+    return flags[marketplace] || marketplace
   }
 
   const filteredScans = savedScans
@@ -1321,7 +1344,33 @@ export default function RecentScansPage() {
                             <div>
                               <p className="text-sm text-gray-500 mb-1">UK SELLING PRICE</p>
                               <div className="flex items-center gap-3">
-                                <p className="text-2xl font-bold text-blue-600">£{(opp.targetPrice || 0).toFixed(2)}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-2xl font-bold text-blue-600">£{(opp.targetPrice || 0).toFixed(2)}</p>
+                                  {/* Price change indicator */}
+                                  {opp.priceHistory?.uk && !opp.priceHistory.uk.isFirstCheck && opp.priceHistory.uk.changePercentage !== null && Math.abs(opp.priceHistory.uk.changePercentage) > 0.01 && (
+                                    <div className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium ${
+                                      opp.priceHistory.uk.changePercentage > 0 
+                                        ? 'bg-red-100 text-red-700' 
+                                        : 'bg-green-100 text-green-700'
+                                    }`}>
+                                      {opp.priceHistory.uk.changePercentage > 0 ? (
+                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                                        </svg>
+                                      ) : (
+                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                                        </svg>
+                                      )}
+                                      {Math.abs(opp.priceHistory.uk.changePercentage).toFixed(1)}%
+                                    </div>
+                                  )}
+                                  {opp.priceHistory?.uk && opp.priceHistory.uk.isFirstCheck && (
+                                    <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs font-medium">
+                                      NEW
+                                    </span>
+                                  )}
+                                </div>
                                 <a
                                   href={`https://www.amazon.co.uk/dp/${opp.asin}`}
                                   target="_blank"
@@ -1332,7 +1381,14 @@ export default function RecentScansPage() {
                                   View on UK
                                 </a>
                               </div>
-                              <p className="text-sm text-gray-500">Ex-VAT: £{((opp.targetPrice || 0) / 1.2).toFixed(2)}</p>
+                              <div className="flex items-center gap-3 mt-1">
+                                <p className="text-sm text-gray-500">Ex-VAT: £{((opp.targetPrice || 0) / 1.2).toFixed(2)}</p>
+                                {opp.priceHistory?.uk && !opp.priceHistory.uk.isFirstCheck && opp.priceHistory.uk.oldPrice && (
+                                  <p className="text-sm text-gray-500">
+                                    Was: £{opp.priceHistory.uk.oldPrice.toFixed(2)}
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           </div>
 
@@ -1347,15 +1403,6 @@ export default function RecentScansPage() {
                                 {(opp.euPrices || []).map((euPrice: any, idx: any) => {
                                   const isProfitable = (euPrice.profit || 0) > 0;
                                   const isBest = euPrice.marketplace === opp.bestOpportunity?.marketplace;
-                                  const getCountryFlag = (marketplace: string) => {
-                                    const flags: { [key: string]: string } = {
-                                      'DE': '🇩🇪',
-                                      'FR': '🇫🇷',
-                                      'IT': '🇮🇹',
-                                      'ES': '🇪🇸'
-                                    }
-                                    return flags[marketplace] || marketplace
-                                  }
                                   
                                   return (
                                     <div 
@@ -1383,7 +1430,21 @@ export default function RecentScansPage() {
                                             }`}>
                                               {isProfitable ? '+' : ''}£{(euPrice.profit || 0).toFixed(2)}
                                             </p>
-                                            <p className="text-sm text-gray-900">£{(euPrice.sourcePriceGBP || 0).toFixed(2)}</p>
+                                            <div className="flex items-center gap-2">
+                                              <p className="text-sm text-gray-900">£{(euPrice.sourcePriceGBP || 0).toFixed(2)}</p>
+                                              {/* Price change for best EU marketplace */}
+                                              {isBest && opp.priceHistory?.bestEu && !opp.priceHistory.bestEu.isFirstCheck && 
+                                               opp.priceHistory.bestEu.changePercentage !== null && Math.abs(opp.priceHistory.bestEu.changePercentage) > 0.01 && (
+                                                <div className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium ${
+                                                  opp.priceHistory.bestEu.changePercentage > 0 
+                                                    ? 'bg-red-100 text-red-700' 
+                                                    : 'bg-green-100 text-green-700'
+                                                }`}>
+                                                  {opp.priceHistory.bestEu.changePercentage > 0 ? '↑' : '↓'}
+                                                  {Math.abs(opp.priceHistory.bestEu.changePercentage).toFixed(1)}%
+                                                </div>
+                                              )}
+                                            </div>
                                             <p className="text-xs text-gray-500">€{(euPrice.sourcePrice || 0).toFixed(2)}</p>
                                           </div>
                                         </div>
@@ -1422,6 +1483,46 @@ export default function RecentScansPage() {
                                     </div>
                                   );
                                 })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Price History Summary */}
+                          {opp.priceHistory && (!opp.priceHistory.uk.isFirstCheck || !opp.priceHistory.bestEu.isFirstCheck) && (
+                            <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                              <h5 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                </svg>
+                                Price History
+                              </h5>
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                {!opp.priceHistory.uk.isFirstCheck && opp.priceHistory.uk.oldPrice && (
+                                  <div>
+                                    <p className="text-gray-600">UK Price Change</p>
+                                    <p className="font-medium">
+                                      £{opp.priceHistory.uk.oldPrice.toFixed(2)} → £{opp.priceHistory.uk.newPrice.toFixed(2)}
+                                      {opp.priceHistory.uk.changePercentage !== null && (
+                                        <span className={`ml-1 ${opp.priceHistory.uk.changePercentage > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                          ({opp.priceHistory.uk.changePercentage > 0 ? '+' : ''}{opp.priceHistory.uk.changePercentage.toFixed(1)}%)
+                                        </span>
+                                      )}
+                                    </p>
+                                  </div>
+                                )}
+                                {!opp.priceHistory.bestEu.isFirstCheck && opp.priceHistory.bestEu.oldPrice && (
+                                  <div>
+                                    <p className="text-gray-600">{getCountryFlag(opp.priceHistory.bestEu.marketplace)} Best EU Price Change</p>
+                                    <p className="font-medium">
+                                      €{opp.priceHistory.bestEu.oldPrice.toFixed(2)} → €{opp.priceHistory.bestEu.newPrice.toFixed(2)}
+                                      {opp.priceHistory.bestEu.changePercentage !== null && (
+                                        <span className={`ml-1 ${opp.priceHistory.bestEu.changePercentage > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                          ({opp.priceHistory.bestEu.changePercentage > 0 ? '+' : ''}{opp.priceHistory.bestEu.changePercentage.toFixed(1)}%)
+                                        </span>
+                                      )}
+                                    </p>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )}
