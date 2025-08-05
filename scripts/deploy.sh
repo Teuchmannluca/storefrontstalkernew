@@ -87,10 +87,11 @@ ssh ${DEPLOY_USER}@${SERVER_IP} "
   pm2 restart strefrontstalker || pm2 start ecosystem.config.js
 "
 
-# Update crontab
-echo "⏰ Updating cron jobs..."
+# Setup cron jobs
+echo "⏰ Setting up cron jobs..."
 ssh ${DEPLOY_USER}@${SERVER_IP} "
-  crontab ${DEPLOY_PATH}/scripts/crontab.txt
+  cd ${DEPLOY_PATH}
+  ./scripts/setup-cron-jobs.sh
 "
 
 echo "✅ Deployment completed successfully!"
