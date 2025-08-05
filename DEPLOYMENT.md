@@ -104,15 +104,60 @@ This guide covers the complete deployment process for migrating from Vercel to a
 
 ## Cron Jobs Setup
 
-The deployment script automatically installs the cron jobs. To verify:
+### Automatic Setup (Recommended)
+
+Run the cron job setup script as the deploy user:
 
 ```bash
-crontab -l
+cd /home/deploy/strefrontstalker
+./scripts/setup-cron-jobs.sh
 ```
 
-You should see:
-- Storefront updates at 2:00 AM UTC daily
-- Arbitrage scans at 3:15 AM UTC daily
+This script will:
+- Install hourly cron jobs for both storefront updates and arbitrage scans
+- Create log files for monitoring
+- Test the endpoints to ensure they're working
+- Handle existing cron job cleanup
+
+### Manual Setup (Alternative)
+
+If you need to set up cron jobs manually:
+
+```bash
+# Edit crontab as deploy user
+crontab -e
+
+# Add these lines:
+# Strefrontstalker - Storefront Updates (every hour)
+0 * * * * curl -s -H "Authorization: Bearer YOUR_CRON_SECRET" http://localhost:3000/api/cron/check-schedules >> /home/deploy/strefrontstalker/logs/cron-storefront.log 2>&1
+
+# Strefrontstalker - Arbitrage Scans (every hour at :30)
+30 * * * * curl -s -H "Authorization: Bearer YOUR_CRON_SECRET" http://localhost:3000/api/cron/check-arbitrage-schedules >> /home/deploy/strefrontstalker/logs/cron-arbitrage.log 2>&1
+```
+
+### How It Works
+
+The cron jobs run **every hour** but only execute tasks that are actually due based on user schedule settings:
+
+- **Storefront Updates**: Checks at :00 minutes of each hour
+- **Arbitrage Scans**: Checks at :30 minutes of each hour
+- **Database-Driven**: The system uses database views to determine which tasks are due
+- **User Flexible**: Users can set any schedule (daily, every 2 days, weekly) and any time
+- **Automatic**: No manual server configuration needed when users change their schedules
+
+### Verification
+
+```bash
+# Check installed cron jobs
+crontab -l
+
+# View recent executions
+tail -f /home/deploy/strefrontstalker/logs/cron-storefront.log
+tail -f /home/deploy/strefrontstalker/logs/cron-arbitrage.log
+
+# Check system status
+curl -H "Authorization: Bearer YOUR_CRON_SECRET" http://localhost:3000/api/cron/status
+```
 
 ## Process Management
 

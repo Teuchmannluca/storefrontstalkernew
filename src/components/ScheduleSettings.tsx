@@ -326,6 +326,18 @@ export default function ScheduleSettings({ userId }: ScheduleSettingsProps) {
       {settings.enabled && (
         <div className="bg-gray-50 rounded-lg p-4 space-y-3">
           <h4 className="text-sm font-medium text-gray-800">Schedule Status</h4>
+          
+          {/* How it works explanation */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="flex items-start gap-2">
+              <ClockIcon className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+              <div className="text-sm text-blue-800">
+                <p className="font-medium mb-1">How automatic updates work:</p>
+                <p>The server checks every hour for due updates. When your scheduled time arrives, all your storefronts will be updated automatically using the Keepa API.</p>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <div>
               <span className="text-gray-600">Last Run:</span>
