@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SPAPICompetitivePricingClient } from '@/lib/sp-api-competitive-pricing';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 
 export async function POST(request: NextRequest) {
   try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
     // Verify user is authenticated
     const authHeader = request.headers.get('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {

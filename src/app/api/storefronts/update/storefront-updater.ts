@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 // import { getASINsFromStorefront } from '@/lib/keepa-api'
 // import { searchCatalogItems, getItemDetails } from '@/lib/amazon-sp-api'
 
@@ -9,6 +9,11 @@ interface Product {
 }
 
 export async function updateStorefront(storefrontId: string) {
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+
   // Function temporarily disabled - missing dependencies
   return { 
     storefrontId, 
@@ -132,6 +137,11 @@ export async function updateStorefront(storefrontId: string) {
 }
 
 async function syncProductsWithAmazon(storefrontId: string) {
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+
   try {
     // Get all products for this storefront
     const { data: products, error } = await supabase

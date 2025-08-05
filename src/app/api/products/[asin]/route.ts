@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import SPAPIClient from '@/lib/sp-api';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ asin: string }> }
 ) {
   try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
     // Verify user is authenticated
     const { data: { user } } = await supabase.auth.getUser();
     

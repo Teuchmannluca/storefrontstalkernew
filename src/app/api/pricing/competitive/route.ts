@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SPAPICompetitivePricingClient } from '@/lib/sp-api-competitive-pricing';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 
 export async function POST(request: NextRequest) {
   try {
@@ -11,6 +11,13 @@ export async function POST(request: NextRequest) {
     }
 
     const token = authHeader.split(' ')[1];
+    
+    // Create Supabase client with anon key for auth verification
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+    
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     
     if (authError || !user) {
