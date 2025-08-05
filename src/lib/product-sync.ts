@@ -1,18 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import SPAPIClient from './sp-api';
 
-// Create Supabase client with service role for background operations
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!, // You'll need to add this to your env
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }
-);
-
 export interface ProductSyncResult {
   success: boolean;
   productsUpdated: number;
@@ -21,6 +9,7 @@ export interface ProductSyncResult {
 
 export class ProductSyncService {
   private spApiClient: SPAPIClient;
+  private supabaseAdmin;
 
   constructor() {
     const credentials = {
@@ -38,6 +27,18 @@ export class ProductSyncService {
     };
     
     this.spApiClient = new SPAPIClient(credentials, config);
+    
+    // Initialize Supabase admin client
+    this.supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    );
   }
 
   async syncAllProducts(): Promise<ProductSyncResult> {
@@ -49,7 +50,7 @@ export class ProductSyncService {
 
     try {
       // Get all products that need syncing
-      const { data: products, error } = await supabaseAdmin
+      const { data: products, error } = await this.supabaseAdmin
         .from('products')
         .select('id, asin')
         .or('sync_status.eq.pending,last_synced_at.lt.now() - interval \'6 hours\'')
@@ -79,7 +80,7 @@ export class ProductSyncService {
   async syncProduct(productId: string, asin: string, result: ProductSyncResult): Promise<void> {
     try {
       // Update status to syncing
-      await supabaseAdmin
+      await this.supabaseAdmin
         .from('products')
         .update({ sync_status: 'syncing' })
         .eq('id', productId);
@@ -88,7 +89,7 @@ export class ProductSyncService {
       const productDetails = await this.spApiClient.getProductByASIN(asin);
 
       // Update product in database
-      const { error: updateError } = await supabaseAdmin
+      const { error: updateError } = await this.supabaseAdmin
         .from('products')
         .update({
           title: productDetails.title,
@@ -111,7 +112,7 @@ export class ProductSyncService {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
       // Update product with error status
-      await supabaseAdmin
+      await this.supabaseAdmin
         .from('products')
         .update({
           sync_status: 'error',
@@ -130,7 +131,7 @@ export class ProductSyncService {
       const productDetails = await this.spApiClient.getProductByASIN(asin);
 
       // Update all products with this ASIN
-      const { error } = await supabaseAdmin
+      const { error } = await this.supabaseAdmin
         .from('products')
         .update({
           title: productDetails.title,
@@ -151,7 +152,7 @@ export class ProductSyncService {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
       // Update products with error status
-      await supabaseAdmin
+      await this.supabaseAdmin
         .from('products')
         .update({
           sync_status: 'error',
