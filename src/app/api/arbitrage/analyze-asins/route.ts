@@ -10,6 +10,7 @@ import { sendStreamError, AppError } from '@/lib/error-handling';
 import { BlacklistService } from '@/lib/blacklist-service';
 import { categorizeProfitLevel, type ProfitCategory } from '@/lib/profit-categorizer';
 import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator';
+import { PriceHistoryService } from '@/lib/price-history-service';
 
 // Marketplace IDs
 const MARKETPLACES = {
@@ -222,6 +223,23 @@ export async function POST(request: NextRequest) {
               excludedCount: excludedCount
             } 
           });
+
+          // Initialize Price History Service
+          const priceHistoryService = new PriceHistoryService(
+            envCheck.values.supabaseUrl,
+            envCheck.values.supabaseServiceKey
+          );
+
+          // Get historical prices for all ASINs before processing
+          sendMessage({ 
+            type: 'progress', 
+            data: { 
+              step: 'Fetching price history...', 
+              progress: 12
+            } 
+          });
+
+          const historicalPrices = await priceHistoryService.getLatestPricesForAsins(user.id, finalAsins);
 
           // Initialize SP-API clients
           const credentials = {
@@ -681,6 +699,50 @@ export async function POST(request: NextRequest) {
                     if (bestOpportunity.profit > 0) {
                       opportunitiesFound++;
                     }
+
+                    // Prepare price history entries
+                    const priceHistoryEntries = [];
+                    
+                    // Get historical UK price
+                    const historicalUkPrice = historicalPrices.get(asin)?.get('UK');
+                    const ukPriceChanged = historicalUkPrice && Math.abs(historicalUkPrice.price - ukPrice) > 0.01;
+                    
+                    // Track UK price
+                    priceHistoryEntries.push({
+                      user_id: user.id,
+                      asin,
+                      marketplace: 'UK',
+                      old_price: historicalUkPrice?.price,
+                      new_price: ukPrice,
+                      old_price_currency: historicalUkPrice?.currency || 'GBP',
+                      new_price_currency: 'GBP',
+                      product_name: productName,
+                      scan_id: scanId
+                    });
+                    
+                    // Track EU marketplace prices
+                    for (const euPrice of euPrices) {
+                      const historicalEuPrice = historicalPrices.get(asin)?.get(euPrice.marketplace);
+                      priceHistoryEntries.push({
+                        user_id: user.id,
+                        asin,
+                        marketplace: euPrice.marketplace,
+                        old_price: historicalEuPrice?.price,
+                        new_price: euPrice.sourcePrice,
+                        old_price_currency: historicalEuPrice?.currency || MARKETPLACES[euPrice.marketplace as keyof typeof MARKETPLACES].currency,
+                        new_price_currency: MARKETPLACES[euPrice.marketplace as keyof typeof MARKETPLACES].currency,
+                        product_name: productName,
+                        scan_id: scanId
+                      });
+                    }
+                    
+                    // Record price history
+                    try {
+                      await priceHistoryService.recordPriceChanges(priceHistoryEntries);
+                    } catch (phError) {
+                      console.error('Failed to record price history:', phError);
+                      // Continue processing even if price history fails
+                    }
                     
                     // Always save to database
                     if (scanId) {
@@ -712,6 +774,16 @@ export async function POST(request: NextRequest) {
                       }
                     }
                     
+                    // Calculate price change info for display
+                    const ukPriceChange = historicalUkPrice ? 
+                      priceHistoryService.calculatePriceChange(historicalUkPrice.price, ukPrice) : 
+                      null;
+                    
+                    const bestEuPriceHistory = historicalPrices.get(asin)?.get(bestOpportunity.marketplace);
+                    const euPriceChange = bestEuPriceHistory ? 
+                      priceHistoryService.calculatePriceChange(bestEuPriceHistory.price, bestOpportunity.sourcePrice) : 
+                      null;
+
                     const opportunity = {
                       asin,
                       productName,
@@ -728,7 +800,26 @@ export async function POST(request: NextRequest) {
                       salesPerMonth,
                       euPrices: euPrices.sort((a, b) => b.roi - a.roi),
                       bestOpportunity,
-                      profitCategory
+                      profitCategory,
+                      priceHistory: {
+                        uk: {
+                          oldPrice: historicalUkPrice?.price,
+                          newPrice: ukPrice,
+                          changeAmount: ukPriceChange?.changeAmount,
+                          changePercentage: ukPriceChange?.changePercentage,
+                          isFirstCheck: !historicalUkPrice,
+                          lastChecked: historicalUkPrice?.last_checked
+                        },
+                        bestEu: {
+                          marketplace: bestOpportunity.marketplace,
+                          oldPrice: bestEuPriceHistory?.price,
+                          newPrice: bestOpportunity.sourcePrice,
+                          changeAmount: euPriceChange?.changeAmount,
+                          changePercentage: euPriceChange?.changePercentage,
+                          isFirstCheck: !bestEuPriceHistory,
+                          lastChecked: bestEuPriceHistory?.last_checked
+                        }
+                      }
                     };
 
                     // Send opportunity message

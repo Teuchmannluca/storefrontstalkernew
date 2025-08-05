@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
@@ -12,7 +12,8 @@ import {
   DocumentDuplicateIcon,
   CheckCircleIcon,
   XCircleIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  FolderIcon
 } from '@heroicons/react/24/outline'
 import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator'
 import { categorizeProfitLevel, getProfitCategoryColor, getProfitCategoryBgColor, getProfitCategoryIcon, getProfitCategoryLabel } from '@/lib/profit-categorizer'
@@ -30,6 +31,15 @@ interface EUMarketplacePrice {
   profitMargin: number
   roi: number
   totalCost: number
+}
+
+interface PriceHistoryInfo {
+  oldPrice?: number
+  newPrice: number
+  changeAmount?: number | null
+  changePercentage?: number | null
+  isFirstCheck: boolean
+  lastChecked?: string
 }
 
 interface ArbitrageOpportunity {
@@ -50,6 +60,10 @@ interface ArbitrageOpportunity {
   euPrices: EUMarketplacePrice[]
   bestOpportunity: EUMarketplacePrice
   profitCategory?: 'profitable' | 'breakeven' | 'loss'
+  priceHistory?: {
+    uk: PriceHistoryInfo
+    bestEu: PriceHistoryInfo & { marketplace: string }
+  }
 }
 
 type SortOption = 'profit' | 'roi' | 'margin' | 'price'
@@ -59,6 +73,7 @@ export default function ASINCheckerPage() {
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([])
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
+  const analysisRef = useRef<HTMLDivElement>(null)
   const [analysisStats, setAnalysisStats] = useState<{
     totalOpportunities: number
     productsAnalyzed: number
@@ -77,12 +92,16 @@ export default function ASINCheckerPage() {
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
   const [lastScanId, setLastScanId] = useState<string | null>(null)
   const [showSaveListModal, setShowSaveListModal] = useState(false)
+  const [showAddToListModal, setShowAddToListModal] = useState(false)
   const [currentListId, setCurrentListId] = useState<string | null>(null)
   const [currentListName, setCurrentListName] = useState<string | null>(null)
+  const [availableLists, setAvailableLists] = useState<any[]>([])
   const router = useRouter()
 
   useEffect(() => {
     checkAuth()
+    fetchAvailableLists()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const checkAuth = async () => {
@@ -97,6 +116,26 @@ export default function ASINCheckerPage() {
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/')
+  }
+
+  const fetchAvailableLists = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const response = await fetch('/api/asin-lists', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      })
+
+      if (response.ok) {
+        const { lists } = await response.json()
+        setAvailableLists(lists || [])
+      }
+    } catch (error) {
+      console.error('Error fetching lists:', error)
+    }
   }
 
   // Validate ASIN format
@@ -152,6 +191,49 @@ export default function ASINCheckerPage() {
     setCurrentListName(null)
   }
 
+  // Add ASINs to existing list
+  const handleAddToExistingList = async (listId: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('No session found')
+
+      const response = await fetch('/api/asin-lists/add-asins', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          listIds: [listId],
+          asins: asinList
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to add ASINs to list')
+      }
+
+      const result = await response.json()
+      
+      // Update current list info
+      const selectedList = availableLists.find(l => l.id === listId)
+      if (selectedList) {
+        setCurrentListId(listId)
+        setCurrentListName(selectedList.name)
+      }
+
+      // Close modal and show success
+      setShowAddToListModal(false)
+      alert(`Successfully added ${result.totalAdded} new ASINs to the list!`)
+      
+      // Refresh available lists
+      fetchAvailableLists()
+    } catch (error: any) {
+      console.error('Error adding to list:', error)
+      alert(`Failed to add ASINs: ${error.message}`)
+    }
+  }
+
   // Load list handler
   const handleLoadList = (asins: string[], listName: string, listId: string) => {
     setAsinList(asins)
@@ -163,18 +245,40 @@ export default function ASINCheckerPage() {
 
   // Scan list handler
   const handleScanList = (asins: string[], listName: string, listId: string) => {
+    // Clear any existing results first
+    setOpportunities([])
+    setAnalysisStats(null)
+    
+    // Set the ASINs and list info
     setAsinList(asins)
     setCurrentListId(listId)
     setCurrentListName(listName)
     setAsinInput('')
     setValidationErrors({})
-    // Trigger analysis immediately
-    setTimeout(() => analyzeASINs(), 100)
+    
+    // Show immediate feedback
+    setAnalysisStats({
+      totalOpportunities: 0,
+      productsAnalyzed: 0,
+      exchangeRate: EUR_TO_GBP_RATE,
+      progressMessage: `Starting analysis of ${listName}...`,
+      progress: 0
+    })
+    
+    // Scroll to analysis section
+    setTimeout(() => {
+      analysisRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
+    
+    // Trigger analysis immediately with the provided ASINs
+    analyzeASINs(asins)
   }
 
   // Analyze ASINs for arbitrage
-  const analyzeASINs = async () => {
-    if (asinList.length === 0) return
+  const analyzeASINs = async (asinsToAnalyze?: string[]) => {
+    // Use provided ASINs or fall back to state
+    const finalAsins = asinsToAnalyze || asinList
+    if (finalAsins.length === 0) return
     
     setAnalyzing(true)
     setOpportunities([])
@@ -191,7 +295,7 @@ export default function ASINCheckerPage() {
           'Authorization': `Bearer ${session.access_token}`
         },
         body: JSON.stringify({
-          asins: asinList
+          asins: finalAsins
         })
       })
       
@@ -389,36 +493,64 @@ export default function ASINCheckerPage() {
                 />
               </div>
               
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleAddASINs}
-                  disabled={!asinInput.trim()}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-                >
-                  <PlusIcon className="w-5 h-5" />
-                  Add ASINs
-                </button>
-                
-                {asinList.length > 0 && (
+              <div className="space-y-3">
+                {/* Primary action buttons */}
+                <div className="flex items-center gap-3">
                   <button
-                    onClick={() => setShowSaveListModal(true)}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center gap-2"
+                    onClick={handleAddASINs}
+                    disabled={!asinInput.trim()}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                  >
+                    <PlusIcon className="w-5 h-5" />
+                    Add ASINs to List Below
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      // Example ASINs for testing
+                      setAsinInput('B09B8V1QH5, B004Q097PA, B00HSMMFK6, B0C4Z69NG3, B08N5WRWNW')
+                    }}
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors flex items-center gap-2"
                   >
                     <DocumentDuplicateIcon className="w-5 h-5" />
-                    Save as List
+                    Load Example ASINs
                   </button>
-                )}
+                </div>
                 
-                <button
-                  onClick={() => {
-                    // Example ASINs for testing
-                    setAsinInput('B09B8V1QH5, B004Q097PA, B00HSMMFK6, B0C4Z69NG3, B08N5WRWNW')
-                  }}
-                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors flex items-center gap-2"
-                >
-                  <DocumentDuplicateIcon className="w-5 h-5" />
-                  Load Example ASINs
-                </button>
+                {/* List management buttons - only show when ASINs are added */}
+                {asinList.length > 0 && (
+                  <div className="flex items-center gap-3 pt-2 border-t border-gray-200">
+                    <span className="text-sm text-gray-600">Save these ASINs:</span>
+                    
+                    {currentListId ? (
+                      <button
+                        onClick={() => handleAddToExistingList(currentListId)}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center gap-2"
+                      >
+                        <PlusIcon className="w-5 h-5" />
+                        Update &quot;{currentListName}&quot;
+                      </button>
+                    ) : (
+                      availableLists.length > 0 && (
+                        <button
+                          onClick={() => setShowAddToListModal(true)}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center gap-2"
+                        >
+                          <PlusIcon className="w-5 h-5" />
+                          Add to Existing List
+                        </button>
+                      )
+                    )}
+                    
+                    <button
+                      onClick={() => setShowSaveListModal(true)}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center gap-2"
+                    >
+                      <DocumentDuplicateIcon className="w-5 h-5" />
+                      Create New List
+                    </button>
+                  </div>
+                )}
               </div>
               
               {/* Validation Errors */}
@@ -466,7 +598,7 @@ export default function ASINCheckerPage() {
               
               <div className="mt-6">
                 <button
-                  onClick={analyzeASINs}
+                  onClick={() => analyzeASINs()}
                   disabled={analyzing || asinList.length === 0}
                   className="w-full px-6 py-3 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-xl font-medium hover:from-violet-600 hover:to-indigo-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
@@ -484,7 +616,7 @@ export default function ASINCheckerPage() {
                 </button>
                 
                 {analysisStats && (
-                  <div className="mt-4 space-y-2">
+                  <div ref={analysisRef} className="mt-4 space-y-2">
                     {/* Progress Bar */}
                     {analyzing && analysisStats.progress !== undefined && (
                       <div className="w-full bg-gray-200 rounded-full h-2">
@@ -821,7 +953,33 @@ export default function ASINCheckerPage() {
                       <div>
                         <p className="text-sm text-gray-500 mb-1">UK SELLING PRICE</p>
                         <div className="flex items-center gap-3">
-                          <p className="text-2xl font-bold text-blue-600">£{(opp.targetPrice || 0).toFixed(2)}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-2xl font-bold text-blue-600">£{(opp.targetPrice || 0).toFixed(2)}</p>
+                            {/* Price change indicator */}
+                            {opp.priceHistory?.uk && !opp.priceHistory.uk.isFirstCheck && opp.priceHistory.uk.changePercentage !== null && Math.abs(opp.priceHistory.uk.changePercentage) > 0.01 && (
+                              <div className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium ${
+                                opp.priceHistory.uk.changePercentage > 0 
+                                  ? 'bg-red-100 text-red-700' 
+                                  : 'bg-green-100 text-green-700'
+                              }`}>
+                                {opp.priceHistory.uk.changePercentage > 0 ? (
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                                  </svg>
+                                ) : (
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                                  </svg>
+                                )}
+                                {Math.abs(opp.priceHistory.uk.changePercentage).toFixed(1)}%
+                              </div>
+                            )}
+                            {opp.priceHistory?.uk && opp.priceHistory.uk.isFirstCheck && (
+                              <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs font-medium">
+                                NEW
+                              </span>
+                            )}
+                          </div>
                           <a
                             href={`https://www.amazon.co.uk/dp/${opp.asin}`}
                             target="_blank"
@@ -832,7 +990,14 @@ export default function ASINCheckerPage() {
                             View on UK
                           </a>
                         </div>
-                        <p className="text-sm text-gray-500">Ex-VAT: £{((opp.targetPrice || 0) / 1.2).toFixed(2)}</p>
+                        <div className="flex items-center gap-3 mt-1">
+                          <p className="text-sm text-gray-500">Ex-VAT: £{((opp.targetPrice || 0) / 1.2).toFixed(2)}</p>
+                          {opp.priceHistory?.uk && !opp.priceHistory.uk.isFirstCheck && opp.priceHistory.uk.oldPrice && (
+                            <p className="text-sm text-gray-500">
+                              Was: £{opp.priceHistory.uk.oldPrice.toFixed(2)}
+                            </p>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -873,7 +1038,21 @@ export default function ASINCheckerPage() {
                                     }`}>
                                       {isProfitable ? '+' : ''}£{(euPrice.profit || 0).toFixed(2)}
                                     </p>
-                                    <p className="text-sm text-gray-900">£{(euPrice.sourcePriceGBP || 0).toFixed(2)}</p>
+                                    <div className="flex items-center gap-2">
+                                      <p className="text-sm text-gray-900">£{(euPrice.sourcePriceGBP || 0).toFixed(2)}</p>
+                                      {/* Price change for best EU marketplace */}
+                                      {isBest && opp.priceHistory?.bestEu && !opp.priceHistory.bestEu.isFirstCheck && 
+                                       opp.priceHistory.bestEu.changePercentage !== null && Math.abs(opp.priceHistory.bestEu.changePercentage) > 0.01 && (
+                                        <div className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium ${
+                                          opp.priceHistory.bestEu.changePercentage > 0 
+                                            ? 'bg-red-100 text-red-700' 
+                                            : 'bg-green-100 text-green-700'
+                                        }`}>
+                                          {opp.priceHistory.bestEu.changePercentage > 0 ? '↑' : '↓'}
+                                          {Math.abs(opp.priceHistory.bestEu.changePercentage).toFixed(1)}%
+                                        </div>
+                                      )}
+                                    </div>
                                     <p className="text-xs text-gray-500">€{(euPrice.sourcePrice || 0).toFixed(2)}</p>
                                   </div>
                                 </div>
@@ -915,6 +1094,46 @@ export default function ASINCheckerPage() {
                       </div>
                     </div>
 
+                    {/* Price History Summary */}
+                    {opp.priceHistory && (!opp.priceHistory.uk.isFirstCheck || !opp.priceHistory.bestEu.isFirstCheck) && (
+                      <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                        <h5 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                          Price History
+                        </h5>
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          {!opp.priceHistory.uk.isFirstCheck && opp.priceHistory.uk.oldPrice && (
+                            <div>
+                              <p className="text-gray-600">UK Price Change</p>
+                              <p className="font-medium">
+                                £{opp.priceHistory.uk.oldPrice.toFixed(2)} → £{opp.priceHistory.uk.newPrice.toFixed(2)}
+                                {opp.priceHistory.uk.changePercentage !== null && (
+                                  <span className={`ml-1 ${opp.priceHistory.uk.changePercentage > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                    ({opp.priceHistory.uk.changePercentage > 0 ? '+' : ''}{opp.priceHistory.uk.changePercentage.toFixed(1)}%)
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          )}
+                          {!opp.priceHistory.bestEu.isFirstCheck && opp.priceHistory.bestEu.oldPrice && (
+                            <div>
+                              <p className="text-gray-600">{getCountryFlag(opp.priceHistory.bestEu.marketplace)} Best EU Price Change</p>
+                              <p className="font-medium">
+                                €{opp.priceHistory.bestEu.oldPrice.toFixed(2)} → €{opp.priceHistory.bestEu.newPrice.toFixed(2)}
+                                {opp.priceHistory.bestEu.changePercentage !== null && (
+                                  <span className={`ml-1 ${opp.priceHistory.bestEu.changePercentage > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                    ({opp.priceHistory.bestEu.changePercentage > 0 ? '+' : ''}{opp.priceHistory.bestEu.changePercentage.toFixed(1)}%)
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Bottom calculation summary */}
                     <div className="mt-6 pt-6 border-t border-gray-100 grid grid-cols-3 gap-4 text-center">
                       <div>
@@ -949,11 +1168,69 @@ export default function ASINCheckerPage() {
         onSave={() => {
           // Refresh the list manager by triggering a re-render
           setShowSaveListModal(false)
+          fetchAvailableLists()
         }}
         asins={asinList}
         existingListId={currentListId}
         existingListName={currentListName}
       />
+
+      {/* Add to Existing List Modal */}
+      {showAddToListModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Add to Existing List</h2>
+              <button
+                onClick={() => setShowAddToListModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <XCircleIcon className="h-6 w-6" />
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4">
+              Select a list to add {asinList.length} ASINs to:
+            </p>
+
+            <div className="space-y-2">
+              {availableLists.map((list) => (
+                <button
+                  key={list.id}
+                  onClick={() => handleAddToExistingList(list.id)}
+                  className="w-full text-left p-4 border rounded-lg hover:border-indigo-300 hover:bg-indigo-50 transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-medium text-gray-900">{list.name}</h3>
+                      <p className="text-sm text-gray-500">
+                        {list.asin_count} ASINs • Last updated {new Date(list.updated_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <PlusIcon className="h-5 w-5 text-gray-400" />
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {availableLists.length === 0 && (
+              <div className="text-center py-8">
+                <FolderIcon className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                <p className="text-gray-500">No lists available</p>
+                <button
+                  onClick={() => {
+                    setShowAddToListModal(false)
+                    setShowSaveListModal(true)
+                  }}
+                  className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                >
+                  Create New List
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

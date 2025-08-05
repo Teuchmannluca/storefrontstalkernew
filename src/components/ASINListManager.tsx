@@ -43,6 +43,7 @@ export default function ASINListManager({
   const [error, setError] = useState<string | null>(null)
   const [editingList, setEditingList] = useState<ASINList | null>(null)
   const [showEditModal, setShowEditModal] = useState(false)
+  const [scanningListId, setScanningListId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchLists()
@@ -165,8 +166,14 @@ export default function ASINListManager({
 
   const handleScanList = async (list: ASINList) => {
     try {
+      // Set scanning state
+      setScanningListId(list.id)
+      
       const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
+      if (!session) {
+        setScanningListId(null)
+        return
+      }
 
       // Update scan statistics
       await fetch(`/api/asin-lists/${list.id}/scan`, {
@@ -176,7 +183,7 @@ export default function ASINListManager({
         }
       })
 
-      // Trigger scan
+      // Trigger scan - this will start the analysis immediately
       onScanList(list.asins, list.name, list.id)
       
       // Update local state
@@ -189,8 +196,12 @@ export default function ASINListManager({
             } 
           : l
       ))
+      
+      // Clear scanning state after a short delay to show feedback
+      setTimeout(() => setScanningListId(null), 1000)
     } catch (err) {
       console.error('Error scanning list:', err)
+      setScanningListId(null)
     }
   }
 
@@ -298,10 +309,18 @@ export default function ASINListManager({
                 </button>
                 <button
                   onClick={() => handleScanList(list)}
-                  className="p-2 text-green-600 hover:text-green-700 hover:bg-green-50 rounded-lg transition-colors"
+                  disabled={scanningListId === list.id}
+                  className="p-2 text-green-600 hover:text-green-700 hover:bg-green-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Scan Now"
                 >
-                  <PlayIcon className="h-5 w-5" />
+                  {scanningListId === list.id ? (
+                    <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  ) : (
+                    <PlayIcon className="h-5 w-5" />
+                  )}
                 </button>
                 <button
                   onClick={() => duplicateList(list)}
