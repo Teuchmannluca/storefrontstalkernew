@@ -1,13 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, unauthorizedResponse, serverErrorResponse } from '@/lib/auth-helpers'
-import { createClient } from '@supabase/supabase-js'
+import { getServiceRoleClient } from '@/lib/supabase-server'
 import { AmazonSPAPISimple } from '@/lib/amazon-sp-api-simple'
 import { SPAPIRateLimiter } from '@/lib/sp-api-rate-limiter'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
 
 // Global processing state to prevent multiple concurrent enrichment processes
 let isEnriching = false
@@ -82,6 +77,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get enrichment queue status
+    const supabase = getServiceRoleClient()
     const { data: stats } = await supabase
       .from('asin_enrichment_queue')
       .select('status')
@@ -115,6 +111,9 @@ export async function GET(request: NextRequest) {
 
 async function processTitleEnrichment(userId: string | null) {
   console.log('🚀 Starting title enrichment process')
+
+  // Initialize Supabase client
+  const supabase = getServiceRoleClient()
 
   // Initialize Amazon SP-API
   const amazonAccessKey = process.env.AMAZON_ACCESS_KEY_ID

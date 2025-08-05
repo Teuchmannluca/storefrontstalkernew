@@ -1,13 +1,9 @@
-import { createClient } from '@supabase/supabase-js'
+import { getServiceRoleClient } from '@/lib/supabase-server'
 import { KeepaStorefrontAPI } from './keepa-storefront'
 import { KeepaPersistentRateLimiter } from './keepa-persistent-rate-limiter'
 import { AmazonSPAPISimple } from './amazon-sp-api-simple'
 import { SPAPIRateLimiter } from './sp-api-rate-limiter'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
 
 interface BatchUpdateResult {
   storefrontId: string
@@ -32,6 +28,7 @@ export class KeepaBatchUpdateManager {
   private keepaApi: KeepaStorefrontAPI
   private spApi: AmazonSPAPISimple
   private spRateLimiter: SPAPIRateLimiter
+  private supabase = getServiceRoleClient()
 
   constructor(userId: string) {
     this.userId = userId
@@ -76,7 +73,7 @@ export class KeepaBatchUpdateManager {
     console.log(`🚀 Starting batch update for ${storefrontIds.length} storefronts`)
     
     // Get all storefront details
-    const { data: storefronts, error } = await supabase
+    const { data: storefronts, error } = await this.supabase
       .from('storefronts')
       .select('*')
       .in('id', storefrontIds)
@@ -137,7 +134,7 @@ export class KeepaBatchUpdateManager {
       console.log(`🔄 Updating storefront: ${storefrontName}`)
 
       // Get current products from database
-      const { data: currentProducts } = await supabase
+      const { data: currentProducts } = await this.supabase
         .from('products')
         .select('asin')
         .eq('storefront_id', storefrontId)
@@ -165,7 +162,7 @@ export class KeepaBatchUpdateManager {
 
       // Remove products no longer in storefront
       if (asinsToRemove.length > 0) {
-        const { error: deleteError } = await supabase
+        const { error: deleteError } = await this.supabase
           .from('products')
           .delete()
           .eq('storefront_id', storefrontId)
@@ -191,7 +188,7 @@ export class KeepaBatchUpdateManager {
         const insertBatchSize = 1000
         for (let i = 0; i < newProducts.length; i += insertBatchSize) {
           const batch = newProducts.slice(i, i + insertBatchSize)
-          const { error: insertError } = await supabase
+          const { error: insertError } = await this.supabase
             .from('products')
             .upsert(batch, { 
               onConflict: 'asin,storefront_id',
@@ -215,7 +212,7 @@ export class KeepaBatchUpdateManager {
       }
 
       // Update storefront metadata
-      await supabase
+      await this.supabase
         .from('storefronts')
         .update({
           last_sync_completed_at: new Date().toISOString(),
@@ -262,7 +259,7 @@ export class KeepaBatchUpdateManager {
     const batchSize = 1000
     for (let i = 0; i < queueItems.length; i += batchSize) {
       const batch = queueItems.slice(i, i + batchSize)
-      const { error } = await supabase
+      const { error } = await this.supabase
         .from('asin_enrichment_queue')
         .upsert(batch, { 
           onConflict: 'asin',
@@ -288,7 +285,7 @@ export class KeepaBatchUpdateManager {
   }
 
   async getEnrichmentQueueStatus() {
-    const { data: stats } = await supabase
+    const { data: stats } = await this.supabase
       .from('asin_enrichment_queue')
       .select('status')
       .eq('user_id', this.userId)
@@ -332,7 +329,7 @@ export class KeepaBatchUpdateManager {
           const brand = AmazonSPAPISimple.extractBrand(catalogItem)
 
           // Update product in database with only Amazon SP-API data
-          const { error: updateError } = await supabase
+          const { error: updateError } = await this.supabase
             .from('products')
             .update({
               product_name: productName,
@@ -390,7 +387,7 @@ export class KeepaBatchUpdateManager {
   }) {
     try {
       // Update the database token tracker with real Keepa data
-      const { error } = await supabase
+      const { error } = await this.supabase
         .from('keepa_token_tracker')
         .update({
           available_tokens: tokenInfo.tokensLeft,

@@ -1,9 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import { getServiceRoleClient } from '@/lib/supabase-server'
 
 interface TokenState {
   availableTokens: number
@@ -16,6 +11,7 @@ export class KeepaPersistentRateLimiter {
   private userId: string
   private localState: TokenState | null = null
   private lastSyncAt = 0
+  private supabase = getServiceRoleClient()
 
   constructor(userId: string) {
     this.userId = userId
@@ -32,7 +28,7 @@ export class KeepaPersistentRateLimiter {
     }
 
     // Get from database
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from('keepa_token_tracker')
       .select('*')
       .eq('user_id', this.userId)
@@ -54,7 +50,7 @@ export class KeepaPersistentRateLimiter {
         last_refill_at: new Date().toISOString()
       }
 
-      const { data: created, error: createError } = await supabase
+      const { data: created, error: createError } = await this.supabase
         .from('keepa_token_tracker')
         .insert(newTracker)
         .select()
@@ -101,7 +97,7 @@ export class KeepaPersistentRateLimiter {
    * Update token state in database
    */
   private async updateTokenState(newState: TokenState): Promise<void> {
-    const { error } = await supabase
+    const { error } = await this.supabase
       .from('keepa_token_tracker')
       .update({
         available_tokens: newState.availableTokens,

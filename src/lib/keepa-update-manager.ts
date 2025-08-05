@@ -1,13 +1,9 @@
-import { createClient } from '@supabase/supabase-js'
+import { getServiceRoleClient } from '@/lib/supabase-server'
 import { KeepaStorefrontAPI } from './keepa-storefront'
 import { KeepaPersistentRateLimiter } from './keepa-persistent-rate-limiter'
 import { AmazonSPAPISimple } from './amazon-sp-api-simple'
 import { SPAPIRateLimiter } from './sp-api-rate-limiter'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
 
 interface UpdateResult {
   storefrontId: string
@@ -37,6 +33,7 @@ export class KeepaUpdateManager {
   private spApi: AmazonSPAPISimple
   private spRateLimiter: SPAPIRateLimiter
   private progressCallback?: (progress: UpdateProgress) => void
+  private supabase = getServiceRoleClient()
 
   constructor(userId: string, progressCallback?: (progress: UpdateProgress) => void) {
     this.userId = userId
@@ -88,7 +85,7 @@ export class KeepaUpdateManager {
    */
   async queueStorefrontUpdates(storefrontIds: string[]): Promise<void> {
     // Get storefront details
-    const { data: storefronts, error } = await supabase
+    const { data: storefronts, error } = await this.supabase
       .from('storefronts')
       .select('*')
       .in('id', storefrontIds)
@@ -99,7 +96,7 @@ export class KeepaUpdateManager {
     }
 
     // Remove any existing queue items for these storefronts
-    await supabase
+    await this.supabase
       .from('storefront_update_queue')
       .delete()
       .in('storefront_id', storefrontIds)
@@ -113,7 +110,7 @@ export class KeepaUpdateManager {
       status: 'pending' as const
     }))
 
-    const { error: insertError } = await supabase
+    const { error: insertError } = await this.supabase
       .from('storefront_update_queue')
       .insert(queueItems)
 
@@ -130,7 +127,7 @@ export class KeepaUpdateManager {
 
     while (true) {
       // Get next item in queue
-      const { data: queueItem, error } = await supabase
+      const { data: queueItem, error } = await this.supabase
         .from('storefront_update_queue')
         .select(`
           *,
@@ -152,7 +149,7 @@ export class KeepaUpdateManager {
       }
 
       // Mark as processing
-      await supabase
+      await this.supabase
         .from('storefront_update_queue')
         .update({ 
           status: 'processing',
@@ -175,7 +172,7 @@ export class KeepaUpdateManager {
         results.push(result)
 
         // Mark as completed
-        await supabase
+        await this.supabase
           .from('storefront_update_queue')
           .update({
             status: 'completed',
@@ -201,7 +198,7 @@ export class KeepaUpdateManager {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error'
         
         // Mark as error
-        await supabase
+        await this.supabase
           .from('storefront_update_queue')
           .update({
             status: 'error',
@@ -281,7 +278,7 @@ export class KeepaUpdateManager {
     })
 
     // Get current products from database
-    const { data: currentProducts, error: productsError } = await supabase
+    const { data: currentProducts, error: productsError } = await this.supabase
       .from('products')
       .select('id, asin')
       .eq('storefront_id', storefrontId)
@@ -320,7 +317,7 @@ export class KeepaUpdateManager {
         message: `Removing ${asinsToRemove.length} products...`
       })
 
-      const { error: deleteError } = await supabase
+      const { error: deleteError } = await this.supabase
         .from('products')
         .delete()
         .eq('storefront_id', storefrontId)
@@ -356,7 +353,7 @@ export class KeepaUpdateManager {
           updated_at: new Date().toISOString()
         }))
 
-        const { data: insertedProducts, error: insertError } = await supabase
+        const { data: insertedProducts, error: insertError } = await this.supabase
           .from('products')
           .insert(newProducts)
           .select()
@@ -380,13 +377,13 @@ export class KeepaUpdateManager {
     }
 
     // Update storefront metadata
-    await supabase
+    await this.supabase
       .from('storefronts')
       .update({
         last_sync_completed_at: new Date().toISOString(),
         last_sync_status: 'completed',
         total_products_synced: keepaASINs.length,
-        keepa_tokens_consumed: (await supabase
+        keepa_tokens_consumed: (await this.supabase
           .from('storefronts')
           .select('keepa_tokens_consumed')
           .eq('id', storefrontId)
@@ -416,7 +413,7 @@ export class KeepaUpdateManager {
     errors: number
     availableTokens: number
   }> {
-    const { data: queueStats } = await supabase
+    const { data: queueStats } = await this.supabase
       .from('storefront_update_queue')
       .select('status')
       .eq('user_id', this.userId)
@@ -445,7 +442,7 @@ export class KeepaUpdateManager {
    * Cancel all pending updates
    */
   async cancelPendingUpdates(): Promise<void> {
-    await supabase
+    await this.supabase
       .from('storefront_update_queue')
       .update({ status: 'cancelled' })
       .eq('user_id', this.userId)
@@ -456,7 +453,7 @@ export class KeepaUpdateManager {
    * Clear completed and cancelled updates from queue
    */
   async clearCompletedUpdates(): Promise<void> {
-    await supabase
+    await this.supabase
       .from('storefront_update_queue')
       .delete()
       .eq('user_id', this.userId)
@@ -485,7 +482,7 @@ export class KeepaUpdateManager {
           const salesRank = AmazonSPAPISimple.extractSalesRank(catalogItem)
 
           // Update product in database
-          const { error: updateError } = await supabase
+          const { error: updateError } = await this.supabase
             .from('products')
             .update({
               product_name: productName,

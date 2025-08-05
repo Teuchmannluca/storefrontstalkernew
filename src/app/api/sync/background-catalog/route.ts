@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { SPAPICatalogClient } from '@/lib/sp-api-catalog';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { getServiceRoleClient } from '@/lib/supabase-server';
 
 export async function POST(request: NextRequest) {
   try {
+    const supabase = getServiceRoleClient();
     // Optional: Add a secret token for security
     const authToken = request.headers.get('x-sync-token');
     if (authToken !== process.env.SYNC_SECRET_TOKEN) {
@@ -149,6 +145,7 @@ export async function POST(request: NextRequest) {
 // GET endpoint to check sync status
 export async function GET(request: NextRequest) {
   try {
+    const supabase = getServiceRoleClient();
     // Count products that need syncing
     // We need to get all products and filter manually
     const { data: allProds } = await supabase

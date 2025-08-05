@@ -1,20 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import SPAPIClient from '@/lib/sp-api'
 import KeepaAPI from '@/lib/keepa-api'
 import https from 'https'
 import { requireAuth, unauthorizedResponse, serverErrorResponse } from '@/lib/auth-helpers'
-
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import { getServiceRoleClient } from '@/lib/supabase-server'
 
 export async function POST(request: NextRequest) {
   try {
     // Verify authentication
     const { user } = await requireAuth()
+    const supabase = getServiceRoleClient()
     
     const { asin, storefrontId } = await request.json()
     
@@ -135,6 +130,7 @@ export async function PUT(request: NextRequest) {
   try {
     // Verify authentication
     const { user } = await requireAuth()
+    const supabase = getServiceRoleClient()
     
     const { asins, storefrontId } = await request.json()
     

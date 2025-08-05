@@ -1,18 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { KeepaStorefrontAPI } from '@/lib/keepa-storefront';
 import { SPAPICatalogClient } from '@/lib/sp-api-catalog';
 import { requireAuth, unauthorizedResponse, serverErrorResponse } from '@/lib/auth-helpers';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { getServiceRoleClient } from '@/lib/supabase-server';
 
 export async function POST(request: NextRequest) {
   try {
     // Verify authentication
     const { user } = await requireAuth();
+    const supabase = getServiceRoleClient();
     
     const { storefrontId, sellerId } = await request.json();
     

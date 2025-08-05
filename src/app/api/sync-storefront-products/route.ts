@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getServiceRoleClient } from '@/lib/supabase-server';
 import SPAPIClient from '@/lib/sp-api';
 import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator';
-
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,6 +15,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch all products for this storefront from Supabase
+    const supabase = getServiceRoleClient();
     const { data: products, error: fetchError } = await supabase
       .from('products')
       .select('id, asin, product_name, brand, image_link, current_sales_rank')
