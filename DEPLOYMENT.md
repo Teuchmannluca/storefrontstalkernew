@@ -18,7 +18,7 @@ This guide covers the complete deployment process for migrating from Vercel to a
 
 2. **Run the server setup script**
    ```bash
-   wget https://raw.githubusercontent.com/your-repo/strefrontstalker/main/scripts/setup-server.sh
+   wget https://raw.githubusercontent.com/Teuchmannluca/storefrontstalkernew/main/scripts/setup-server.sh
    chmod +x setup-server.sh
    ./setup-server.sh
    ```
@@ -42,8 +42,8 @@ This guide covers the complete deployment process for migrating from Vercel to a
 
 1. **Clone the repository on your local machine**
    ```bash
-   git clone https://github.com/your-repo/strefrontstalker.git
-   cd strefrontstalker
+   git clone https://github.com/Teuchmannluca/storefrontstalkernew.git
+   cd storefrontstalkernew
    ```
 
 2. **Create production environment file**
