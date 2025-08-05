@@ -50,6 +50,11 @@ ssh ${DEPLOY_USER}@${SERVER_IP} "
   # Install dependencies
   npm ci --production=false
   
+  # Source environment variables if they exist
+  if [ -f \".env.production\" ]; then
+    export \$(grep -v '^#' .env.production | xargs)
+  fi
+  
   # Build the application
   NODE_ENV=production npm run build
   

@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-
-// Initialize Supabase with service role key for cron operations
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import { getServiceRoleClient } from '@/lib/supabase-server'
 
 interface ArbitrageScheduleDue {
   id: string
@@ -42,6 +36,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get all arbitrage schedules that are due for execution
+    const supabase = getServiceRoleClient()
     const { data: schedulesDue, error: fetchError } = await supabase
       .from('arbitrage_schedules_due_for_execution')
       .select('*')
@@ -185,6 +180,7 @@ export async function GET(request: NextRequest) {
 async function updateArbitrageScheduleAfterExecution(scheduleId: string, schedule: ArbitrageScheduleDue) {
   try {
     const now = new Date().toISOString()
+    const supabase = getServiceRoleClient()
     
     // Call the database function to calculate next run
     const { data, error } = await supabase.rpc('calculate_next_run', {

@@ -3,10 +3,12 @@ import { requireAuth, unauthorizedResponse, serverErrorResponse } from '@/lib/au
 import { createClient } from '@supabase/supabase-js'
 import { getBatchProgress, clearBatchProgress } from '@/lib/batch-progress-tracker'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+function getSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,6 +22,7 @@ export async function GET(request: NextRequest) {
     const batchProgress = getBatchProgress(user.id)
     
     // Get enrichment queue status
+    const supabase = getSupabase()
     const { data: enrichmentStats } = await supabase
       .from('asin_enrichment_queue')
       .select('status')
