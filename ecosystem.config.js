@@ -1,8 +1,8 @@
 module.exports = {
   apps: [{
     name: 'strefrontstalker',
-    script: './server.js',
-    cwd: '/home/deploy/strefrontstalker/.next/standalone',
+    script: 'server.js',
+    cwd: '/home/deploy/strefrontstalker',
     instances: 1, // CPX31 has 2 vCPUs, but we'll use 1 for stability
     exec_mode: 'cluster',
     env: {

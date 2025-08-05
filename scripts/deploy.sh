@@ -51,15 +51,25 @@ ssh ${DEPLOY_USER}@${SERVER_IP} "
   npm ci --production=false
   
   # Build the application
-  npm run build
+  NODE_ENV=production npm run build
   
-  # Install production dependencies only
-  npm ci --production
+  # Check if standalone was created
+  if [ ! -d \".next/standalone\" ]; then
+    echo \"❌ Error: Standalone build not created. Check build logs.\"
+    exit 1
+  fi
   
   # Copy standalone files
   cp -r .next/standalone/* ./
+  mkdir -p .next/standalone/.next
   cp -r .next/static .next/standalone/.next/
-  cp -r public .next/standalone/
+  if [ -d \"public\" ]; then
+    cp -r public .next/standalone/
+  fi
+  
+  # Copy package.json for standalone
+  cp package.json .next/standalone/
+  cp package-lock.json .next/standalone/
   
   # Make scripts executable
   chmod +x scripts/*.sh
