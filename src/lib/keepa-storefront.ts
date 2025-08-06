@@ -316,8 +316,9 @@ export class KeepaStorefrontAPI {
   }
 
   consumeTokens(amount: number): void {
-    this.currentTokens = Math.max(0, this.currentTokens - amount);
-    console.log(`Consumed ${amount} tokens. Remaining: ${this.currentTokens}`);
+    // No-op: Keepa automatically deducts tokens server-side
+    // Token count is updated from API responses only
+    console.log(`Token consumption handled by Keepa API (requested: ${amount} tokens)`);
   }
 
   initializeTokensFromAPI(): void {
