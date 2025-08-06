@@ -19,12 +19,12 @@ const MARKETPLACES = {
 
 const EUR_TO_GBP_RATE = 0.86;
 
-// Amazon SP-API Rate Limits
+// Amazon SP-API Rate Limits (Updated 2025 - OFFICIAL LIMITS)
 const RATE_LIMITS = {
   COMPETITIVE_PRICING: {
-    requestsPerSecond: 10,
+    requestsPerSecond: 0.5,  // FIXED: Amazon actual limit is 0.5 req/sec
     itemsPerRequest: 20,
-    burstSize: 30
+    burstSize: 1             // FIXED: Amazon actual burst is 1
   },
   PRODUCT_FEES: {
     requestsPerSecond: 1,
@@ -345,19 +345,41 @@ export async function POST(request: NextRequest) {
             const asins = batch.map(p => p.asin);
             const marketplacePrices = new Map<string, any>();
 
-            // Fetch pricing from all EU marketplaces concurrently
-            const pricingPromises = Object.entries(MARKETPLACES).map(async ([countryCode, marketplace]) => {
+            // Fetch pricing from all EU marketplaces SEQUENTIALLY (no parallel requests)
+            const pricingResults = [];
+            let lastPricingRequest = Date.now();
+            const pricingMinInterval = 2000; // 2 seconds between requests
+            
+            for (const [countryCode, marketplace] of Object.entries(MARKETPLACES)) {
               try {
-                await new Promise(resolve => setTimeout(resolve, 100 * Math.random())); // Stagger requests
+                // Ensure minimum interval between pricing requests
+                const now = Date.now();
+                const timeSinceLastRequest = now - lastPricingRequest;
+                if (timeSinceLastRequest < pricingMinInterval) {
+                  await new Promise(resolve => setTimeout(resolve, pricingMinInterval - timeSinceLastRequest));
+                }
+                lastPricingRequest = Date.now();
+                
                 const prices = await pricingClient.getCompetitivePricing(asins, marketplace.id);
-                return { countryCode, prices };
-              } catch (error) {
-                console.error(`Error fetching pricing for ${countryCode}:`, error);
-                return { countryCode, prices: {} };
+                pricingResults.push({ countryCode, prices });
+              } catch (error: any) {
+                if (error.message?.includes('429') || error.message?.includes('TooManyRequests')) {
+                  console.log(`Rate limited for ${countryCode} pricing, waiting 5s...`);
+                  await new Promise(resolve => setTimeout(resolve, 5000));
+                  // Retry once
+                  try {
+                    const prices = await pricingClient.getCompetitivePricing(asins, marketplace.id);
+                    pricingResults.push({ countryCode, prices });
+                  } catch (retryError) {
+                    console.error(`Retry failed for ${countryCode}:`, retryError);
+                    pricingResults.push({ countryCode, prices: {} });
+                  }
+                } else {
+                  console.error(`Error fetching pricing for ${countryCode}:`, error);
+                  pricingResults.push({ countryCode, prices: {} });
+                }
               }
-            });
-
-            const pricingResults = await Promise.all(pricingPromises);
+            }
             pricingResults.forEach(({ countryCode, prices }) => {
               Object.entries(prices).forEach(([asin, priceData]) => {
                 if (!marketplacePrices.has(asin)) {

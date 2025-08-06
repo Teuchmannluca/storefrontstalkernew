@@ -461,6 +461,7 @@ export default function ASINCheckerPage() {
             <p className="text-gray-600">Check specific ASINs for Amazon UK to EU arbitrage opportunities</p>
           </div>
 
+
           {/* ASIN Lists Manager */}
           <ASINListManager 
             onLoadList={handleLoadList}

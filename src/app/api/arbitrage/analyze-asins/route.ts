@@ -11,6 +11,7 @@ import { BlacklistService } from '@/lib/blacklist-service';
 import { categorizeProfitLevel, type ProfitCategory } from '@/lib/profit-categorizer';
 import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator';
 import { PriceHistoryService } from '@/lib/price-history-service';
+import { notificationService } from '@/lib/notification-service';
 
 // Marketplace IDs
 const MARKETPLACES = {
@@ -23,19 +24,19 @@ const MARKETPLACES = {
 
 const EUR_TO_GBP_RATE = 0.86;
 
-// Amazon SP-API Rate Limits
+// Amazon SP-API Rate Limits (Updated 2025 - OFFICIAL LIMITS)
 const RATE_LIMITS = {
   COMPETITIVE_PRICING: {
-    requestsPerSecond: 10,
+    requestsPerSecond: 0.5,  // FIXED: Amazon actual limit is 0.5 req/sec
     itemsPerRequest: 20,
-    burstSize: 30
+    burstSize: 1             // FIXED: Amazon actual burst is 1
   },
   PRODUCT_FEES: {
     requestsPerSecond: 1,
     burstSize: 2
   },
   CATALOG: {
-    requestsPerSecond: 2,
+    requestsPerSecond: 2,    // Catalog API is correct
     burstSize: 2
   }
 };
@@ -747,30 +748,45 @@ export async function POST(request: NextRequest) {
                     // Always save to database
                     if (scanId) {
                       try {
-                        await supabase
+                        const opportunityData = {
+                          scan_id: scanId,
+                          asin,
+                          product_name: productName,
+                          product_image: productImage,
+                          target_price: ukPrice,
+                          amazon_fees: amazonFees,
+                          referral_fee: referralFee,
+                          digital_services_fee: 0, // Included in total amazon_fees
+                          uk_competitors: ukCompetitors,
+                          uk_sales_rank: salesRank,
+                          sales_per_month: salesPerMonth,
+                          best_source_marketplace: bestOpportunity.marketplace,
+                          best_source_price: bestOpportunity.sourcePrice,
+                          best_source_price_gbp: bestOpportunity.sourcePriceGBP,
+                          best_profit: bestOpportunity.profit,
+                          best_roi: bestOpportunity.roi,
+                          profit_category: profitCategory,
+                          all_marketplace_prices: { euPrices }
+                        };
+
+                        console.log('=== SAVING OPPORTUNITY TO DB ===');
+                        console.log('ASIN:', asin);
+                        console.log('Best profit:', bestOpportunity.profit);
+                        console.log('Best ROI:', bestOpportunity.roi);
+                        console.log('Profit category:', profitCategory);
+                        console.log('Full opportunity data:', opportunityData);
+
+                        const { error: insertError } = await supabase
                           .from('arbitrage_opportunities')
-                          .insert({
-                            scan_id: scanId,
-                            asin,
-                            product_name: productName,
-                            product_image: productImage,
-                            target_price: ukPrice,
-                            amazon_fees: amazonFees,
-                            referral_fee: referralFee,
-                            digital_services_fee: 0, // Included in total amazon_fees
-                            uk_competitors: ukCompetitors,
-                            uk_sales_rank: salesRank,
-                            sales_per_month: salesPerMonth,
-                            best_source_marketplace: bestOpportunity.marketplace,
-                            best_source_price: bestOpportunity.sourcePrice,
-                            best_source_price_gbp: bestOpportunity.sourcePriceGBP,
-                            best_profit: bestOpportunity.profit,
-                            best_roi: bestOpportunity.roi,
-                            profit_category: profitCategory,
-                            all_marketplace_prices: { euPrices }
-                          });
+                          .insert(opportunityData);
+
+                        if (insertError) {
+                          console.error('[DB] Failed to save opportunity:', insertError);
+                        } else {
+                          console.log('[DB] Successfully saved opportunity for ASIN:', asin);
+                        }
                       } catch (dbError) {
-                        console.error('[DB] Failed to save opportunity:', dbError);
+                        console.error('[DB] Exception saving opportunity:', dbError);
                       }
                     }
                     
@@ -915,6 +931,92 @@ export async function POST(request: NextRequest) {
           const completionMessage = excludedCount > 0
             ? `Analysis complete! Analysed ${processedCount} ASINs (${excludedCount} blacklisted ASINs excluded) and found ${opportunitiesFound} profitable opportunities.`
             : `Analysis complete! Analysed all ${processedCount} ASINs and found ${opportunitiesFound} profitable opportunities.`;
+
+          // Send scan complete notification for all scans (regardless of results)
+          if (scanId) {
+            try {
+              console.log('=== NOTIFICATION DEBUG START ===');
+              console.log('Scan ID:', scanId);
+              console.log('Processed count:', processedCount);
+              console.log('Opportunities found during scan:', opportunitiesFound);
+
+              // Get all opportunities (including non-profitable ones)
+              const { data: allOpportunities, error: queryError } = await supabase
+                .from('arbitrage_opportunities')
+                .select('asin, best_profit, best_roi, product_name, profit_category')
+                .eq('scan_id', scanId)
+                .order('best_profit', { ascending: false });
+
+              console.log('Database query error:', queryError);
+              console.log('All opportunities from DB:', allOpportunities);
+
+              // Calculate actual profitable count (best_profit > 0)
+              const actualProfitableCount = allOpportunities?.filter(opp => (opp.best_profit || 0) > 0).length || 0;
+              
+              // Get best profitable deal
+              const bestDeal = allOpportunities?.find(opp => (opp.best_profit || 0) > 0) || allOpportunities?.[0];
+              
+              // Calculate total profit from profitable deals only
+              const totalProfit = allOpportunities
+                ?.filter(opp => (opp.best_profit || 0) > 0)
+                ?.reduce((sum, opp) => sum + (opp.best_profit || 0), 0) || 0;
+
+              console.log('Notification calculation results:', {
+                scanId,
+                processedCount,
+                opportunitiesFound,
+                actualProfitableCount,
+                totalOpportunities: allOpportunities?.length || 0,
+                totalProfit,
+                bestDeal,
+                profitableDeals: allOpportunities?.filter(opp => (opp.best_profit || 0) > 0)
+              });
+              console.log('=== NOTIFICATION DEBUG END ===');
+
+              await notificationService.sendNotification({
+                userId: user.id,
+                type: 'scan_complete',
+                data: {
+                  scanType: 'ASIN Checker',
+                  productsAnalyzed: processedCount,
+                  profitableCount: actualProfitableCount,
+                  totalProfit: totalProfit,
+                  bestProfit: bestDeal?.best_profit || 0,
+                  bestRoi: bestDeal?.best_roi || 0
+                }
+              });
+
+              // Send high profit deals notification for exceptional opportunities
+              const { data: highProfitDeals } = await supabase
+                .from('arbitrage_opportunities')
+                .select('*')
+                .eq('scan_id', scanId)
+                .or('best_profit.gte.10,best_roi.gte.50')
+                .limit(5);
+
+              if (highProfitDeals && highProfitDeals.length > 0) {
+                for (const deal of highProfitDeals) {
+                  await notificationService.sendNotification({
+                    userId: user.id,
+                    type: 'high_profit_deal',
+                    data: {
+                      asin: deal.asin,
+                      productName: deal.product_name || 'Unknown Product',
+                      profit: deal.best_profit,
+                      roi: deal.best_roi,
+                      sourceMarket: deal.best_source_marketplace,
+                      sourcePrice: deal.best_source_price,
+                      targetPrice: deal.target_price
+                    },
+                    priority: 'immediate'
+                  });
+                }
+              }
+            } catch (notificationError) {
+              console.error('Failed to send notification:', notificationError);
+              // Don't fail the scan if notification fails
+            }
+          }
 
           sendMessage({ 
             type: 'complete', 

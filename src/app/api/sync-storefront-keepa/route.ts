@@ -3,6 +3,7 @@ import { KeepaStorefrontAPI } from '@/lib/keepa-storefront';
 import { SPAPICatalogClient } from '@/lib/sp-api-catalog';
 import { requireAuth, unauthorizedResponse, serverErrorResponse } from '@/lib/auth-helpers';
 import { getServiceRoleClient } from '@/lib/supabase-server';
+import { notificationService } from '@/lib/notification-service';
 
 export async function POST(request: NextRequest) {
   try {
@@ -33,51 +34,68 @@ export async function POST(request: NextRequest) {
     console.log('Seller ID:', sellerId);
     const keepaStorefront = new KeepaStorefrontAPI(keepaApiKey, keepaDomain);
 
-    // Step 1: Check available tokens
-    // Rate limiting temporarily disabled for testing
-    // const availableTokens = keepaStorefront.getAvailableTokens();
-    // if (availableTokens < 50) {
-    //   return NextResponse.json(
-    //     { 
-    //       error: 'Insufficient Keepa API tokens available',
-    //       availableTokens,
-    //       requiredTokens: 50,
-    //       waitTimeSeconds: Math.ceil((50 - availableTokens) * 3)
-    //     },
-    //     { status: 429 }
-    //   );
-    // }
+    // Initialize tokens from API response (don't artificially reset)
+    keepaStorefront.initializeTokensFromAPI();
 
-    // Step 2: Fetch seller info
-    const sellerInfo = await keepaStorefront.getSellerInfo(sellerId);
-    if (!sellerInfo) {
-      return NextResponse.json(
-        { error: 'Seller not found' },
-        { status: 404 }
-      );
+    // Step 1: Make the API call first to get actual token count
+    // Don't pre-check tokens since we start with 0 - let the API tell us the real count
+
+    // Step 2: Fetch ASINs from seller storefront (this costs 50 tokens)
+    console.log('Fetching ASINs from seller storefront...');
+    let asinResult;
+    try {
+      asinResult = await keepaStorefront.getSellerASINs(sellerId, 0); // Get first page  
+    } catch (error: any) {
+      // Handle token errors from the actual API call
+      if (error.message?.includes('Insufficient Keepa API tokens')) {
+        const currentTokens = keepaStorefront.getAvailableTokens();
+        const tokensNeeded = 50 - currentTokens;
+        const waitTimeMinutes = Math.ceil(tokensNeeded / 22); // 22 tokens per minute
+        
+        return NextResponse.json(
+          { 
+            error: 'Insufficient Keepa API tokens available',
+            availableTokens: currentTokens,
+            requiredTokens: 50,
+            tokensNeeded,
+            waitTimeSeconds: waitTimeMinutes * 60,
+            waitTimeMinutes,
+            regenerationRate: '22 tokens per minute'
+          },
+          { status: 429 }
+        );
+      }
+      throw error; // Re-throw other errors
     }
+    
+    const asins = asinResult.asinList;
+    console.log(`Found ${asins.length} ASINs for seller ${sellerId}`);
+    
+    // Get seller info from the same API response (no extra cost)
+    const sellerInfo = {
+      sellerId: sellerId,
+      name: asinResult.sellerName || `Seller ${sellerId}`
+    };
 
     // Update storefront with seller name if available
-    if (sellerInfo.name) {
+    if (asinResult.sellerName) {
       await supabase
         .from('storefronts')
-        .update({ name: sellerInfo.name })
+        .update({ name: asinResult.sellerName })
         .eq('id', storefrontId);
     }
-
-    // Step 3: Fetch all ASINs from seller (costs 50 tokens per page)
-    const asins = await keepaStorefront.getAllSellerASINs(sellerId, 3); // Limit to 3 pages
 
     if (asins.length === 0) {
       return NextResponse.json({
         success: true,
-        message: 'No products found for this seller',
+        message: 'No products found for this seller storefront',
         seller: sellerInfo,
-        productsAdded: 0
+        productsAdded: 0,
+        tokensUsed: asinResult.tokenInfo?.tokensConsumed || 50
       });
     }
 
-    // Step 4: Get existing products to avoid duplicates
+    // Step 3: Get existing products to avoid duplicates
     const { data: existingProducts } = await supabase
       .from('products')
       .select('asin')
@@ -86,11 +104,38 @@ export async function POST(request: NextRequest) {
     const existingAsins = new Set(existingProducts?.map(p => p.asin) || []);
     const newAsins = asins.filter(asin => !existingAsins.has(asin));
 
-    // Initialize counters
-    let totalProductsAdded = 0;
-    let totalProductsWithDetails = 0;
+    console.log(`Found ${newAsins.length} new ASINs out of ${asins.length} total ASINs`);
 
-    // Step 5: Fetch product details from SP-API if we have new ASINs
+    // Step 4: Save all new ASINs to database first (basic info only)
+    let totalProductsAdded = 0;
+    if (newAsins.length > 0) {
+      console.log(`Saving ${newAsins.length} new ASINs to database...`);
+      
+      const basicProducts = newAsins.map(asin => ({
+        storefront_id: storefrontId,
+        seller_id: sellerId,
+        asin: asin,
+        product_name: asin, // Will be updated with SP-API data
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }));
+
+      const { data: insertedProducts, error: insertError } = await supabase
+        .from('products')
+        .insert(basicProducts)
+        .select();
+
+      if (insertError) {
+        console.error('Error inserting basic products:', insertError);
+        throw new Error('Failed to save ASINs to database');
+      } else {
+        totalProductsAdded = insertedProducts?.length || 0;
+        console.log(`✅ Saved ${totalProductsAdded} ASINs to database`);
+      }
+    }
+
+    // Step 5: Now enrich the new products with Amazon SP-API data
+    let totalProductsWithDetails = 0;
     if (newAsins.length > 0) {
       console.log(`Fetching product details for ${newAsins.length} ASINs`);
       
@@ -140,39 +185,46 @@ export async function POST(request: NextRequest) {
             // The rate limiter in catalogClient will handle the timing
             const startTime = Date.now();
           
-          const catalogItem = await catalogClient.getCatalogItem(
-            asin,
-            [spApiConfig.marketplaceId],
-            ['summaries', 'images', 'salesRanks']
-          );
+            const catalogItem = await catalogClient.getCatalogItem(
+              asin,
+              [spApiConfig.marketplaceId],
+              ['summaries', 'images']
+            );
 
-          const marketplaceData = {
-            summary: catalogItem.summaries?.find(s => s.marketplaceId === spApiConfig.marketplaceId),
-            images: catalogItem.images?.find(i => i.marketplaceId === spApiConfig.marketplaceId)?.images || [],
-            salesRanks: catalogItem.salesRanks?.find(s => s.marketplaceId === spApiConfig.marketplaceId)?.ranks || []
-          };
+            const marketplaceData = {
+              summary: catalogItem.summaries?.find(s => s.marketplaceId === spApiConfig.marketplaceId),
+              images: catalogItem.images?.find(i => i.marketplaceId === spApiConfig.marketplaceId)?.images || []
+            };
 
-          const mainImage = marketplaceData.images.find(img => img.variant === 'MAIN')?.link || 
-                           marketplaceData.images[0]?.link || 
-                           null;
+            const mainImage = marketplaceData.images.find(img => img.variant === 'MAIN')?.link || 
+                             marketplaceData.images[0]?.link || 
+                             null;
 
-          totalProductsWithDetails++;
-          consecutiveErrors = 0; // Reset error counter on success
-          
-          batchProductsToInsert.push({
-            storefront_id: storefrontId,
-            seller_id: sellerId,
-            asin: asin,
-            product_name: marketplaceData.summary?.itemName || asin,
-            brand: marketplaceData.summary?.brandName,
-            image_link: mainImage,
-            current_sales_rank: marketplaceData.salesRanks[0]?.rank,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          });
+            totalProductsWithDetails++;
+            consecutiveErrors = 0; // Reset error counter on success
+            
+            // Update existing product record instead of creating new one
+            const updateData = {
+              product_name: marketplaceData.summary?.itemName || asin,
+              brand: marketplaceData.summary?.brandName,
+              image_link: mainImage,
+              category: marketplaceData.summary?.browseNode || null,
+              updated_at: new Date().toISOString()
+            };
+
+            // Update the product in database
+            const { error: updateError } = await supabase
+              .from('products')
+              .update(updateData)
+              .eq('asin', asin)
+              .eq('storefront_id', storefrontId);
+
+            if (updateError) {
+              console.error(`Error updating product ${asin}:`, updateError);
+            }
 
             const elapsed = Date.now() - startTime;
-            console.log(`✓ Fetched ${asin} in ${elapsed}ms`);
+            console.log(`✓ Updated ${asin} with SP-API data in ${elapsed}ms`);
             
           } catch (error: any) {
             console.error(`Error fetching details for ASIN ${asin}:`, error.message);
@@ -207,15 +259,7 @@ export async function POST(request: NextRequest) {
               rateLimitWaitTime = 60000; // Reset to 1 minute
             }
           
-            // Still insert the product with just the ASIN
-            batchProductsToInsert.push({
-              storefront_id: storefrontId,
-              seller_id: sellerId,
-              asin: asin,
-              product_name: asin,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            });
+            // Keep the basic ASIN record (already saved), SP-API enrichment failed
           }
           
           // Delay between requests to respect rate limits
@@ -227,23 +271,9 @@ export async function POST(request: NextRequest) {
           }
         }
         
-        // Save this batch to Supabase
-        if (batchProductsToInsert.length > 0) {
-          console.log(`Saving ${batchProductsToInsert.length} products from this batch to database...`);
-          
-          const { data: insertedProducts, error: insertError } = await supabase
-            .from('products')
-            .insert(batchProductsToInsert)
-            .select();
-
-          if (insertError) {
-            console.error('Error inserting batch products:', insertError);
-          } else {
-            const batchAdded = insertedProducts?.length || 0;
-            totalProductsAdded += batchAdded;
-            console.log(`✓ Batch saved: ${batchAdded} products added to database`);
-          }
-        }
+        // Products are updated individually, no batch insert needed
+        console.log(`✓ Batch ${Math.floor(batchStart / batchSize) + 1} completed`);
+        
         
         // Delay between batches
         if (batchStart + batchSize < newAsins.length) {
@@ -253,6 +283,42 @@ export async function POST(request: NextRequest) {
       }
 
       console.log(`\n✅ All batches completed successfully!`);
+    }
+
+    // Send notifications if products were added
+    if (totalProductsAdded > 0) {
+      // Get storefront name for notification
+      const { data: storefrontData } = await supabase
+        .from('storefronts')
+        .select('name')
+        .eq('id', storefrontId)
+        .single();
+
+      const storefrontName = storefrontData?.name || sellerInfo.name || `Seller ${sellerId}`;
+
+      // Send sync complete notification
+      await notificationService.sendNotification({
+        userId: user.id,
+        type: 'products_sync_complete',
+        data: {
+          storefrontName,
+          productsAdded: totalProductsAdded,
+          productsRemoved: 0,
+          totalProducts: asins.length
+        }
+      });
+
+      // Send new products found notification if significant
+      if (totalProductsAdded >= 5) {
+        await notificationService.sendNotification({
+          userId: user.id,
+          type: 'new_products_found',
+          data: {
+            storefrontName,
+            count: totalProductsAdded
+          }
+        });
+      }
     }
 
     return NextResponse.json({
@@ -265,7 +331,9 @@ export async function POST(request: NextRequest) {
       existingAsins: existingAsins.size,
       productsAdded: totalProductsAdded,
       productsWithDetails: totalProductsWithDetails,
-      message: `Successfully fetched ${asins.length} ASINs. Added ${totalProductsAdded} new products (${totalProductsWithDetails} with full details).`
+      tokensUsed: asinResult.tokenInfo?.tokensConsumed || 50,
+      tokensRemaining: keepaStorefront.getAvailableTokens(),
+      message: `Successfully fetched ${asins.length} ASINs from storefront. Added ${totalProductsAdded} new products (${totalProductsWithDetails} with SP-API details).`
     });
 
   } catch (error) {

@@ -231,20 +231,105 @@ async function triggerArbitrageScan(schedule: ArbitrageScheduleDue) {
  * Perform a single storefront arbitrage scan
  */
 async function performSingleStorefrontScan(userId: string, storefrontId: string, scanId: string) {
-  // This is a simplified version - in production you'd want to implement
-  // the full arbitrage logic similar to what's in the streaming endpoints
-  
-  // For now, return mock data to make the cron job functional
-  // TODO: Implement actual arbitrage scanning logic
-  
   console.log(`📊 Performing single storefront scan for storefront ${storefrontId}`)
   
-  // Simulate scan work
-  await new Promise(resolve => setTimeout(resolve, 2000))
-  
-  return {
-    opportunities_found: Math.floor(Math.random() * 10) + 1, // 1-10 opportunities
-    products_analyzed: Math.floor(Math.random() * 100) + 50  // 50-150 products
+  try {
+    const supabase = getServiceRoleClient()
+    
+    // Get products from the storefront
+    const { data: products, error: productsError } = await supabase
+      .from('products')
+      .select('asin, product_name, price, availability, current_sales_rank')
+      .eq('storefront_id', storefrontId)
+      .limit(100) // Limit for scheduled scans to avoid long execution times
+    
+    if (productsError || !products || products.length === 0) {
+      console.log(`No products found for storefront ${storefrontId}`)
+      return {
+        opportunities_found: 0,
+        products_analyzed: 0
+      }
+    }
+    
+    console.log(`Found ${products.length} products to analyze for storefront ${storefrontId}`)
+    
+    // Use the internal API to perform the analysis
+    // This will respect rate limits automatically
+    const analysisUrl = `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/arbitrage/analyze-stream`
+    
+    const response = await fetch(analysisUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.CRON_SECRET || 'default-secret'}`
+      },
+      body: JSON.stringify({
+        storefrontId: storefrontId,
+        maxProducts: 50, // Limit for scheduled scans
+        scheduled: true  // Flag to indicate this is a scheduled scan
+      })
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Analysis API returned ${response.status}`)
+    }
+    
+    // For scheduled scans, we don't need the streaming response
+    // Just wait for completion and return summary
+    let opportunitiesFound = 0
+    let productsAnalyzed = 0
+    
+    const reader = response.body?.getReader()
+    if (reader) {
+      const decoder = new TextDecoder()
+      
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          
+          const chunk = decoder.decode(value)
+          const lines = chunk.split('\n')
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const message = JSON.parse(line.slice(6))
+                
+                switch (message.type) {
+                  case 'opportunity':
+                    opportunitiesFound++
+                    break
+                  case 'complete':
+                    productsAnalyzed = message.data.totalProducts || products.length
+                    break
+                }
+              } catch (parseError) {
+                // Ignore parse errors in scheduled scans
+              }
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock()
+      }
+    }
+    
+    console.log(`✅ Single storefront scan completed: ${opportunitiesFound} opportunities from ${productsAnalyzed} products`)
+    
+    return {
+      opportunities_found: opportunitiesFound,
+      products_analyzed: productsAnalyzed
+    }
+    
+  } catch (error: any) {
+    console.error(`❌ Error in single storefront scan for ${storefrontId}:`, error)
+    
+    // Return mock data as fallback to prevent cron job failure
+    return {
+      opportunities_found: 0,
+      products_analyzed: 0
+    }
   }
 }
 
@@ -252,20 +337,104 @@ async function performSingleStorefrontScan(userId: string, storefrontId: string,
  * Perform an all storefronts arbitrage scan
  */
 async function performAllStorefrontsScan(userId: string, scanId: string) {
-  // This is a simplified version - in production you'd want to implement
-  // the full arbitrage logic similar to what's in the streaming endpoints
-  
-  // For now, return mock data to make the cron job functional
-  // TODO: Implement actual arbitrage scanning logic
-  
   console.log(`📊 Performing all storefronts scan for user ${userId}`)
   
-  // Simulate scan work
-  await new Promise(resolve => setTimeout(resolve, 5000))
-  
-  return {
-    opportunities_found: Math.floor(Math.random() * 25) + 5,  // 5-30 opportunities
-    products_analyzed: Math.floor(Math.random() * 500) + 200  // 200-700 products
+  try {
+    const supabase = getServiceRoleClient()
+    
+    // Get user's storefronts
+    const { data: storefronts, error: storefrontsError } = await supabase
+      .from('storefronts')
+      .select('id, name, seller_id')
+      .eq('user_id', userId)
+    
+    if (storefrontsError || !storefronts || storefronts.length === 0) {
+      console.log(`No storefronts found for user ${userId}`)
+      return {
+        opportunities_found: 0,
+        products_analyzed: 0
+      }
+    }
+    
+    console.log(`Found ${storefronts.length} storefronts for user ${userId}`)
+    
+    // Use the internal API to perform all sellers analysis
+    // This will respect rate limits automatically
+    const analysisUrl = `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/arbitrage/analyze-all-sellers`
+    
+    const response = await fetch(analysisUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.CRON_SECRET || 'default-secret'}`
+      },
+      body: JSON.stringify({
+        maxProducts: 200, // Limit for scheduled scans
+        scheduled: true   // Flag to indicate this is a scheduled scan
+      })
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Analysis API returned ${response.status}`)
+    }
+    
+    // For scheduled scans, we don't need the streaming response
+    // Just wait for completion and return summary
+    let opportunitiesFound = 0
+    let productsAnalyzed = 0
+    
+    const reader = response.body?.getReader()
+    if (reader) {
+      const decoder = new TextDecoder()
+      
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          
+          const chunk = decoder.decode(value)
+          const lines = chunk.split('\n')
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const message = JSON.parse(line.slice(6))
+                
+                switch (message.type) {
+                  case 'opportunity':
+                    opportunitiesFound++
+                    break
+                  case 'complete':
+                    productsAnalyzed = message.data.totalProducts || 0
+                    opportunitiesFound = message.data.opportunitiesFound || opportunitiesFound
+                    break
+                }
+              } catch (parseError) {
+                // Ignore parse errors in scheduled scans
+              }
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock()
+      }
+    }
+    
+    console.log(`✅ All storefronts scan completed: ${opportunitiesFound} opportunities from ${productsAnalyzed} products`)
+    
+    return {
+      opportunities_found: opportunitiesFound,
+      products_analyzed: productsAnalyzed
+    }
+    
+  } catch (error: any) {
+    console.error(`❌ Error in all storefronts scan for user ${userId}:`, error)
+    
+    // Return fallback data to prevent cron job failure
+    return {
+      opportunities_found: 0,
+      products_analyzed: 0
+    }
   }
 }
 

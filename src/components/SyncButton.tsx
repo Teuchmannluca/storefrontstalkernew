@@ -36,10 +36,15 @@ export default function SyncButton({
       type: 'storefront_sync',
       storefront: storefrontName,
       status: 'active',
-      message: 'Fetching products from Amazon...'
+      message: 'Checking Keepa tokens...'
     })
 
     try {
+      // Step 1: Check token availability
+      updateSyncOperation(operationId, {
+        message: 'Fetching ASINs from Keepa...'
+      })
+
       const result = await syncStorefrontProducts(
         storefrontId, 
         sellerId, 
@@ -56,11 +61,29 @@ export default function SyncButton({
           onSyncComplete()
         }
       } else {
-        updateSyncOperation(operationId, {
-          status: 'error',
-          message: result.error || 'Synchronisation failed'
-        })
+        // Handle different types of errors
+        if (result.error?.includes('Insufficient Keepa API tokens')) {
+          updateSyncOperation(operationId, {
+            status: 'error',
+            message: 'Not enough Keepa tokens. Wait for regeneration.'
+          })
+        } else if (result.error?.includes('rate limit')) {
+          updateSyncOperation(operationId, {
+            status: 'error',
+            message: 'Keepa API rate limit hit. Please wait a few minutes before retrying.'
+          })
+        } else {
+          updateSyncOperation(operationId, {
+            status: 'error',
+            message: result.error || 'Synchronisation failed'
+          })
+        }
       }
+    } catch (error: any) {
+      updateSyncOperation(operationId, {
+        status: 'error',
+        message: error.message || 'Sync failed'
+      })
     } finally {
       setLoading(false)
     }
@@ -71,10 +94,10 @@ export default function SyncButton({
       onClick={handleSync}
       disabled={loading}
       className={`inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all ${className}`}
-      title="Fetch products from Amazon using Keepa API"
+      title="Step 1: Keepa fetches ASINs, Step 2: Amazon API gets product details"
     >
       <ArrowPathIcon className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      {loading ? 'Fetching ASINs...' : 'Fetch Products'}
+      {loading ? 'Syncing...' : 'Sync Storefront'}
     </button>
   )
 }

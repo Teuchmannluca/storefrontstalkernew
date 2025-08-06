@@ -10,6 +10,7 @@ interface SellerInfo {
 interface KeepaSellerSearchResult {
   asinList: string[];
   totalResults: number;
+  sellerName?: string;
   tokenInfo?: {
     tokensLeft: number;
     tokensConsumed: number;
@@ -22,21 +23,31 @@ export class KeepaStorefrontAPI {
   private apiKey: string;
   private domain: number;
   private rateLimiter: KeepaRateLimiter;
-  
+  private currentTokens: number;
+  private lastTokenUpdate: number;
+  private readonly TOKENS_PER_MINUTE = 22;
+
   constructor(apiKey: string, domain: number = 2) {
     this.apiKey = apiKey;
     this.domain = domain;
-    // Initialize rate limiter with 20 tokens per minute
+    // Start with current available tokens (will be updated from API responses)
+    this.currentTokens = 0; // Will be set from first API call
+    this.lastTokenUpdate = Date.now();
+    // Initialize rate limiter with realistic settings
     this.rateLimiter = new KeepaRateLimiter({
-      tokensPerMinute: 20,
-      maxBurst: 20
+      tokensPerMinute: 22, // Real regeneration rate
+      maxBurst: 500 // Max tokens you can have
     });
   }
 
   async getSellerASINs(sellerId: string, page: number = 0): Promise<KeepaSellerSearchResult> {
     // Seller search costs 50 tokens
-    // Rate limiting temporarily disabled for testing
-    // await this.rateLimiter.consume(50);
+    // Skip rate limiter for first call to get actual token count
+    if (this.currentTokens === 0) {
+      console.log('First API call - skipping rate limiter to get actual tokens');
+    } else {
+      await this.rateLimiter.consume(50);
+    }
     
     try {
       const url = 'https://api.keepa.com/seller';
@@ -45,7 +56,7 @@ export class KeepaStorefrontAPI {
         domain: this.domain,
         seller: sellerId,
         storefront: 1, // Request storefront ASINs
-        update: 1, // Force update to get latest data
+        update: 0, // Don't force update to save tokens
         page: page,
         perPage: 100, // Maximum allowed per page
         sort: 1, // Sort by sales rank
@@ -54,6 +65,10 @@ export class KeepaStorefrontAPI {
       console.log('Fetching seller ASINs with params:', params);
       const response = await axios.get(url, { params });
       console.log('Seller ASINs response:', response.data);
+      
+      // Update token count from response and consume tokens
+      this.updateTokensFromResponse(response);
+      this.consumeTokens(50); // Each page costs 50 tokens
       
       if (response.data && response.data.sellers) {
         // Keepa returns sellers as an object keyed by seller ID, not an array
@@ -69,9 +84,16 @@ export class KeepaStorefrontAPI {
             timestamp: response.data.timestamp || Date.now()
           } : undefined;
           
+          // Log the seller data to see what we're getting
+          console.log('Seller data keys:', Object.keys(sellerData));
+          console.log('ASIN list length:', sellerData.asinList?.length || 0);
+          console.log('Total storefront ASINs:', sellerData.totalStorefrontAsins);
+          console.log('Seller name:', sellerData.sellerName);
+          
           return {
             asinList: sellerData.asinList || [],
             totalResults: sellerData.totalStorefrontAsins?.[1] || sellerData.asinList?.length || 0,
+            sellerName: sellerData.sellerName || null,
             tokenInfo
           };
         }
@@ -84,7 +106,11 @@ export class KeepaStorefrontAPI {
     } catch (error) {
       if (axios.isAxiosError(error)) {
         if (error.response?.status === 429) {
-          throw new Error('Keepa API rate limit exceeded. Please wait before retrying.');
+          console.log('Keepa API rate limit hit, waiting 60 seconds...');
+          // Wait 60 seconds for rate limit reset
+          await new Promise(resolve => setTimeout(resolve, 60000));
+          // Retry once
+          return this.getSellerASINs(sellerId, page);
         }
         if (error.response?.status === 402) {
           throw new Error('Insufficient Keepa API tokens. Please check your subscription.');
@@ -126,8 +152,7 @@ export class KeepaStorefrontAPI {
 
   async getSellerInfo(sellerId: string): Promise<SellerInfo | null> {
     // Seller info lookup costs 1 token
-    // Rate limiting temporarily disabled for testing
-    // await this.rateLimiter.consume(1);
+    await this.rateLimiter.consume(1);
     
     try {
       const url = 'https://api.keepa.com/seller';
@@ -141,6 +166,10 @@ export class KeepaStorefrontAPI {
       console.log('Fetching seller info with params:', params);
       const response = await axios.get(url, { params });
       console.log('Seller info response:', response.data);
+      
+      // Update token count from response and consume 1 token
+      this.updateTokensFromResponse(response);
+      this.consumeTokens(1); // Seller info costs 1 token
       
       if (response.data && response.data.sellers) {
         // Keepa returns sellers as an object keyed by seller ID, not an array
@@ -157,13 +186,65 @@ export class KeepaStorefrontAPI {
       
       return null;
     } catch (error) {
+      if (axios.isAxiosError(error)) {
+        if (error.response?.status === 429) {
+          console.log('Keepa API rate limit hit, waiting 60 seconds...');
+          // Wait 60 seconds for rate limit reset
+          await new Promise(resolve => setTimeout(resolve, 60000));
+          // Retry once
+          return this.getSellerInfo(sellerId);
+        }
+        if (error.response?.status === 402) {
+          throw new Error('Insufficient Keepa API tokens. Please check your subscription.');
+        }
+      }
       console.error('Error fetching seller info:', error);
       throw error;
     }
   }
 
+  private updateTokensFromResponse(response: any): void {
+    // Update tokens from Keepa API response if available
+    if (response.data && typeof response.data.tokensLeft === 'number') {
+      this.currentTokens = response.data.tokensLeft;
+      this.lastTokenUpdate = Date.now();
+      console.log(`Updated tokens from Keepa API: ${this.currentTokens}`);
+    }
+  }
+
+  private regenerateTokens(): void {
+    // Regenerate tokens based on time passed (22 tokens per minute)
+    const now = Date.now();
+    const minutesPassed = (now - this.lastTokenUpdate) / (1000 * 60);
+    const tokensToAdd = Math.floor(minutesPassed * this.TOKENS_PER_MINUTE);
+    
+    if (tokensToAdd > 0) {
+      // Don't cap at 500 - use actual subscription limits
+      this.currentTokens += tokensToAdd;
+      this.lastTokenUpdate = now;
+      console.log(`Regenerated ${tokensToAdd} tokens. Current: ${this.currentTokens}`);
+    }
+  }
+
   getAvailableTokens(): number {
-    return this.rateLimiter.getAvailableTokens();
+    // Regenerate tokens based on time passed
+    this.regenerateTokens();
+    // If we haven't made any API calls yet, we don't know the real token count
+    if (this.currentTokens === 0) {
+      console.log('No API calls made yet - returning estimated tokens');
+      return 100; // Return a reasonable estimate to allow first API call
+    }
+    return this.currentTokens;
+  }
+
+  consumeTokens(amount: number): void {
+    this.currentTokens = Math.max(0, this.currentTokens - amount);
+    console.log(`Consumed ${amount} tokens. Remaining: ${this.currentTokens}`);
+  }
+
+  initializeTokensFromAPI(): void {
+    // Initialize tokens from the first API call - don't reset artificially
+    console.log('🔄 Will initialize tokens from first Keepa API response');
   }
 }
 

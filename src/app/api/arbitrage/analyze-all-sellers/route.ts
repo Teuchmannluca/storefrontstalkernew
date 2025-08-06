@@ -19,12 +19,12 @@ const MARKETPLACES = {
 
 const EUR_TO_GBP_RATE = 0.86;
 
-// Amazon SP-API Rate Limits
+// Amazon SP-API Rate Limits (Updated 2025 - OFFICIAL LIMITS)
 const RATE_LIMITS = {
   COMPETITIVE_PRICING: {
-    requestsPerSecond: 10,
+    requestsPerSecond: 0.5,  // FIXED: Amazon actual limit is 0.5 req/sec
     itemsPerRequest: 20,
-    burstSize: 30
+    burstSize: 1             // FIXED: Amazon actual burst is 1
   },
   PRODUCT_FEES: {
     requestsPerSecond: 1,
@@ -298,15 +298,12 @@ export async function POST(request: NextRequest) {
           });
 
           try {
-            // Fetch pricing for all marketplaces (EXACT SAME AS SINGLE SELLER)
-            const pricingPromises = Object.entries(MARKETPLACES).map(async ([country, marketplace], index) => {
-              // Stagger requests to avoid burst limits
-              if (index > 0) {
-                await new Promise(resolve => setTimeout(resolve, index * pricingMinInterval));
-              }
-              
+            // Fetch pricing for all marketplaces SEQUENTIALLY (no parallel requests)
+            const allPricing = [];
+            
+            for (const [country, marketplace] of Object.entries(MARKETPLACES)) {
               try {
-                // Ensure minimum interval between pricing requests
+                // Ensure minimum interval between pricing requests (2 seconds)
                 const now = Date.now();
                 const timeSinceLastRequest = now - lastPricingRequest;
                 if (timeSinceLastRequest < pricingMinInterval) {
@@ -320,11 +317,11 @@ export async function POST(request: NextRequest) {
                   'Asin',
                   'Consumer'
                 );
-                return { country, pricing };
+                allPricing.push({ country, pricing });
               } catch (error: any) {
                 if (error.message?.includes('429') || error.message?.includes('TooManyRequests')) {
-                  console.log(`Rate limited for ${country} pricing, waiting 2s...`);
-                  await new Promise(resolve => setTimeout(resolve, 2000));
+                  console.log(`Rate limited for ${country} pricing, waiting 5s...`);
+                  await new Promise(resolve => setTimeout(resolve, 5000));
                   // Retry once
                   try {
                     const pricing = await pricingClient.getCompetitivePricing(
@@ -333,18 +330,17 @@ export async function POST(request: NextRequest) {
                       'Asin',
                       'Consumer'
                     );
-                    return { country, pricing };
+                    allPricing.push({ country, pricing });
                   } catch (retryError) {
                     console.error(`Retry failed for ${country}:`, retryError);
-                    return { country, pricing: [] };
+                    allPricing.push({ country, pricing: [] });
                   }
+                } else {
+                  console.error(`Error fetching pricing for ${country}:`, error);
+                  allPricing.push({ country, pricing: [] });
                 }
-                console.error(`Error fetching pricing for ${country}:`, error);
-                return { country, pricing: [] };
               }
-            });
-
-            const allPricing = await Promise.all(pricingPromises);
+            }
             
             // Organize pricing data by ASIN (EXACT SAME AS SINGLE SELLER)
             const pricingByAsin = new Map<string, any>();

@@ -13,7 +13,9 @@ import {
   MagnifyingGlassIcon,
   ClockIcon,
   NoSymbolIcon,
-  ShoppingBagIcon
+  ShoppingBagIcon,
+  HeartIcon,
+  BellIcon
 } from '@heroicons/react/24/outline'
 import { 
   HomeIcon as HomeIconSolid,
@@ -23,7 +25,9 @@ import {
   MagnifyingGlassIcon as MagnifyingGlassIconSolid,
   ClockIcon as ClockIconSolid,
   NoSymbolIcon as NoSymbolIconSolid,
-  ShoppingBagIcon as ShoppingBagIconSolid
+  ShoppingBagIcon as ShoppingBagIconSolid,
+  HeartIcon as HeartIconSolid,
+  BellIcon as BellIconSolid
 } from '@heroicons/react/24/solid'
 
 interface SidebarProps {
@@ -39,6 +43,8 @@ const navigation = [
   { name: 'Recent Scans', href: '/dashboard/recent-scans', icon: ClockIcon, iconActive: ClockIconSolid },
   { name: 'Sourcing Lists', href: '/dashboard/sourcing-lists', icon: ShoppingBagIcon, iconActive: ShoppingBagIconSolid },
   { name: 'ASIN Checker', href: '/dashboard/asin-checker', icon: MagnifyingGlassIcon, iconActive: MagnifyingGlassIconSolid },
+  { name: 'Notifications', href: '/dashboard/notifications', icon: BellIcon, iconActive: BellIconSolid },
+  { name: 'API Health', href: '/dashboard/api-health', icon: HeartIcon, iconActive: HeartIconSolid },
   { name: 'Blacklist', href: '/dashboard/blacklist', icon: NoSymbolIcon, iconActive: NoSymbolIconSolid },
 ]
 

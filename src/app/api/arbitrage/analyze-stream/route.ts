@@ -9,6 +9,7 @@ import { sendStreamError, AppError, ErrorCategory, MonitoredError } from '@/lib/
 import { BlacklistService } from '@/lib/blacklist-service';
 import { categorizeProfitLevel, type ProfitCategory } from '@/lib/profit-categorizer';
 import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator';
+import { notificationService } from '@/lib/notification-service';
 
 // Marketplace IDs
 const MARKETPLACES = {
@@ -21,14 +22,14 @@ const MARKETPLACES = {
 
 const EUR_TO_GBP_RATE = 0.86;
 
-// Amazon SP-API Rate Limits
-// Competitive Pricing API: 10 requests per second, 20 items per request
+// Amazon SP-API Rate Limits (Updated 2025 - OFFICIAL LIMITS)
+// Competitive Pricing API: 0.5 requests per second (1 every 2 seconds), 20 items per request
 // Product Fees API: 1 request per second
 const RATE_LIMITS = {
   COMPETITIVE_PRICING: {
-    requestsPerSecond: 10,
+    requestsPerSecond: 0.5,  // FIXED: Amazon actual limit is 0.5 req/sec
     itemsPerRequest: 20,
-    burstSize: 30
+    burstSize: 1             // FIXED: Amazon actual burst is 1
   },
   PRODUCT_FEES: {
     requestsPerSecond: 1,
@@ -339,15 +340,12 @@ export async function POST(request: NextRequest) {
           });
 
           try {
-            // Fetch pricing for all marketplaces with proper rate limiting
-            const pricingPromises = Object.entries(MARKETPLACES).map(async ([country, marketplace], index) => {
-              // Stagger requests to avoid burst limits
-              if (index > 0) {
-                await new Promise(resolve => setTimeout(resolve, index * pricingMinInterval));
-              }
-              
+            // Fetch pricing for all marketplaces SEQUENTIALLY (no parallel requests)
+            const allPricing = [];
+            
+            for (const [country, marketplace] of Object.entries(MARKETPLACES)) {
               try {
-                // Ensure minimum interval between pricing requests
+                // Ensure minimum interval between pricing requests (2 seconds)
                 const now = Date.now();
                 const timeSinceLastRequest = now - lastPricingRequest;
                 if (timeSinceLastRequest < pricingMinInterval) {
@@ -361,11 +359,11 @@ export async function POST(request: NextRequest) {
                   'Asin',
                   'Consumer'
                 );
-                return { country, pricing };
+                allPricing.push({ country, pricing });
               } catch (error: any) {
                 if (error.message?.includes('429') || error.message?.includes('TooManyRequests')) {
-                  console.log(`Rate limited for ${country} pricing, waiting 2s...`);
-                  await new Promise(resolve => setTimeout(resolve, 2000));
+                  console.log(`Rate limited for ${country} pricing, waiting 5s...`);
+                  await new Promise(resolve => setTimeout(resolve, 5000));
                   // Retry once
                   try {
                     const pricing = await pricingClient.getCompetitivePricing(
@@ -374,18 +372,17 @@ export async function POST(request: NextRequest) {
                       'Asin',
                       'Consumer'
                     );
-                    return { country, pricing };
+                    allPricing.push({ country, pricing });
                   } catch (retryError) {
                     console.error(`Retry failed for ${country}:`, retryError);
-                    return { country, pricing: [] };
+                    allPricing.push({ country, pricing: [] });
                   }
+                } else {
+                  console.error(`Error fetching pricing for ${country}:`, error);
+                  allPricing.push({ country, pricing: [] });
                 }
-                console.error(`Error fetching pricing for ${country}:`, error);
-                return { country, pricing: [] };
               }
-            });
-
-            const allPricing = await Promise.all(pricingPromises);
+            }
             
             // Organize pricing data by ASIN
             const pricingByAsin = new Map<string, any>();
@@ -959,6 +956,72 @@ export async function POST(request: NextRequest) {
         const completionMessage = excludedCount > 0
           ? `Analysis complete! Analysed ${finalProducts.length} products (${excludedCount} blacklisted ASINs excluded) and found ${opportunitiesFound} profitable opportunities.`
           : `Analysis complete! Analysed all ${finalProducts.length} products and found ${opportunitiesFound} profitable opportunities.`;
+
+        // Send scan complete notification for all scans (regardless of results)
+        if (scanId) {
+          try {
+            // Get all opportunities (including non-profitable ones)
+            const { data: allOpportunities } = await supabase
+              .from('arbitrage_opportunities')
+              .select('best_profit, best_roi')
+              .eq('scan_id', scanId)
+              .order('best_profit', { ascending: false });
+
+            // Calculate actual profitable count (best_profit > 0)
+            const actualProfitableCount = allOpportunities?.filter(opp => (opp.best_profit || 0) > 0).length || 0;
+            
+            // Get best profitable deal
+            const bestDeal = allOpportunities?.find(opp => (opp.best_profit || 0) > 0) || allOpportunities?.[0];
+            
+            // Calculate total profit from profitable deals only
+            const totalProfit = allOpportunities
+              ?.filter(opp => (opp.best_profit || 0) > 0)
+              ?.reduce((sum, opp) => sum + (opp.best_profit || 0), 0) || 0;
+
+            await notificationService.sendNotification({
+              userId: user.id,
+              type: 'scan_complete',
+              data: {
+                scanType: storefrontId ? 'Single Storefront' : 'All Storefronts',
+                productsAnalyzed: finalProducts.length,
+                profitableCount: actualProfitableCount,
+                totalProfit: totalProfit,
+                bestProfit: bestDeal?.best_profit || 0,
+                bestRoi: bestDeal?.best_roi || 0
+              }
+            });
+
+            // Send high profit deals notification for exceptional opportunities
+            const { data: highProfitDeals } = await supabase
+              .from('arbitrage_opportunities')
+              .select('*')
+              .eq('scan_id', scanId)
+              .or('best_profit.gte.10,best_roi.gte.50')
+              .limit(5);
+
+            if (highProfitDeals && highProfitDeals.length > 0) {
+              for (const deal of highProfitDeals) {
+                await notificationService.sendNotification({
+                  userId: user.id,
+                  type: 'high_profit_deal',
+                  data: {
+                    asin: deal.asin,
+                    productName: deal.product_name || 'Unknown Product',
+                    profit: deal.best_profit,
+                    roi: deal.best_roi,
+                    sourceMarket: deal.best_source_marketplace,
+                    sourcePrice: deal.best_source_price,
+                    targetPrice: deal.target_price
+                  },
+                  priority: 'immediate'
+                });
+              }
+            }
+          } catch (notificationError) {
+            console.error('Failed to send notification:', notificationError);
+            // Don't fail the scan if notification fails
+          }
+        }
 
         sendMessage({ 
           type: 'complete', 
