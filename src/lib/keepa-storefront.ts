@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { KeepaRateLimiter } from './keepa-rate-limiter';
 
 interface SellerInfo {
   sellerId: string;
@@ -22,10 +21,11 @@ interface KeepaSellerSearchResult {
 export class KeepaStorefrontAPI {
   private apiKey: string;
   private domain: number;
-  private rateLimiter: KeepaRateLimiter;
   private currentTokens: number;
   private lastTokenUpdate: number;
   private readonly TOKENS_PER_MINUTE = 22;
+  private lastApiCallTime: number = 0;
+  private readonly MIN_TIME_BETWEEN_CALLS = 3000; // 3 seconds minimum between API calls
 
   constructor(apiKey: string, domain: number = 2) {
     this.apiKey = apiKey;
@@ -33,20 +33,21 @@ export class KeepaStorefrontAPI {
     // Start with current available tokens (will be updated from API responses)
     this.currentTokens = 0; // Will be set from first API call
     this.lastTokenUpdate = Date.now();
-    // Initialize rate limiter with realistic settings
-    this.rateLimiter = new KeepaRateLimiter({
-      tokensPerMinute: 22, // Real regeneration rate
-      maxBurst: 500 // Max tokens you can have
-    });
   }
 
   async getSellerASINs(sellerId: string, page: number = 0): Promise<KeepaSellerSearchResult> {
+    // Enforce minimum time between API calls
+    await this.enforceRateLimit();
+    
     // Seller search costs 50 tokens
-    // Skip rate limiter for first call to get actual token count
-    if (this.currentTokens === 0) {
-      console.log('First API call - skipping rate limiter to get actual tokens');
-    } else {
-      await this.rateLimiter.consume(50);
+    // Check if we have enough tokens before making the call
+    const availableTokens = this.getAvailableTokens();
+    if (availableTokens < 50) {
+      const tokensNeeded = 50 - availableTokens;
+      const waitTime = Math.ceil(tokensNeeded / this.TOKENS_PER_MINUTE * 60 * 1000);
+      console.log(`Insufficient tokens: ${availableTokens}/50 available. Need ${tokensNeeded} more tokens.`);
+      console.log(`Waiting ${Math.ceil(waitTime / 1000)} seconds for token regeneration...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     }
     
     try {
@@ -66,9 +67,8 @@ export class KeepaStorefrontAPI {
       const response = await axios.get(url, { params });
       console.log('Seller ASINs response:', response.data);
       
-      // Update token count from response and consume tokens
+      // Update token count from response (only consume tokens on successful request)
       this.updateTokensFromResponse(response);
-      this.consumeTokens(50); // Each page costs 50 tokens
       
       if (response.data && response.data.sellers) {
         // Keepa returns sellers as an object keyed by seller ID, not an array
@@ -151,8 +151,17 @@ export class KeepaStorefrontAPI {
   }
 
   async getSellerInfo(sellerId: string): Promise<SellerInfo | null> {
+    // Enforce minimum time between API calls
+    await this.enforceRateLimit();
+    
     // Seller info lookup costs 1 token
-    await this.rateLimiter.consume(1);
+    const availableTokens = this.getAvailableTokens();
+    if (availableTokens < 1) {
+      const waitTime = Math.ceil(1 / this.TOKENS_PER_MINUTE * 60 * 1000);
+      console.log(`Insufficient tokens: ${availableTokens}/1 available.`);
+      console.log(`Waiting ${Math.ceil(waitTime / 1000)} seconds for token regeneration...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
     
     try {
       const url = 'https://api.keepa.com/seller';
@@ -167,9 +176,8 @@ export class KeepaStorefrontAPI {
       const response = await axios.get(url, { params });
       console.log('Seller info response:', response.data);
       
-      // Update token count from response and consume 1 token
+      // Update token count from response (tokens are automatically deducted by Keepa)
       this.updateTokensFromResponse(response);
-      this.consumeTokens(1); // Seller info costs 1 token
       
       if (response.data && response.data.sellers) {
         // Keepa returns sellers as an object keyed by seller ID, not an array
@@ -206,21 +214,33 @@ export class KeepaStorefrontAPI {
   private updateTokensFromResponse(response: any): void {
     // Update tokens from Keepa API response if available
     if (response.data && typeof response.data.tokensLeft === 'number') {
-      this.currentTokens = response.data.tokensLeft;
+      this.currentTokens = Math.max(0, response.data.tokensLeft); // Never allow negative tokens
       this.lastTokenUpdate = Date.now();
+      this.lastApiCallTime = Date.now();
       console.log(`Updated tokens from Keepa API: ${this.currentTokens}`);
+      
+      // Warn if tokens are getting low
+      if (this.currentTokens < 100) {
+        console.warn(`⚠️ Low token count: ${this.currentTokens} tokens remaining`);
+      }
     }
   }
 
   private regenerateTokens(): void {
+    // Don't regenerate if we haven't made any API calls yet
+    if (this.lastTokenUpdate === 0) {
+      return;
+    }
+    
     // Regenerate tokens based on time passed (22 tokens per minute)
     const now = Date.now();
     const minutesPassed = (now - this.lastTokenUpdate) / (1000 * 60);
     const tokensToAdd = Math.floor(minutesPassed * this.TOKENS_PER_MINUTE);
     
     if (tokensToAdd > 0) {
-      // Don't cap at 500 - use actual subscription limits
-      this.currentTokens += tokensToAdd;
+      // Cap at a reasonable maximum (most Keepa plans have daily limits)
+      const maxTokens = 5000; // Reasonable cap for most plans
+      this.currentTokens = Math.min(maxTokens, Math.max(0, this.currentTokens + tokensToAdd));
       this.lastTokenUpdate = now;
       console.log(`Regenerated ${tokensToAdd} tokens. Current: ${this.currentTokens}`);
     }
@@ -229,12 +249,24 @@ export class KeepaStorefrontAPI {
   getAvailableTokens(): number {
     // Regenerate tokens based on time passed
     this.regenerateTokens();
-    // If we haven't made any API calls yet, we don't know the real token count
-    if (this.currentTokens === 0) {
-      console.log('No API calls made yet - returning estimated tokens');
-      return 100; // Return a reasonable estimate to allow first API call
+    // If we haven't made any API calls yet, assume we have some tokens
+    if (this.lastTokenUpdate === 0) {
+      console.log('No API calls made yet - assuming initial tokens available');
+      return 100; // Assume we have tokens for first call
     }
-    return this.currentTokens;
+    return Math.max(0, this.currentTokens); // Never return negative
+  }
+
+  private async enforceRateLimit(): Promise<void> {
+    // Ensure minimum time between API calls to avoid hitting rate limits
+    const now = Date.now();
+    const timeSinceLastCall = now - this.lastApiCallTime;
+    
+    if (timeSinceLastCall < this.MIN_TIME_BETWEEN_CALLS) {
+      const waitTime = this.MIN_TIME_BETWEEN_CALLS - timeSinceLastCall;
+      console.log(`Rate limiting: waiting ${waitTime}ms before next API call`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
   }
 
   consumeTokens(amount: number): void {

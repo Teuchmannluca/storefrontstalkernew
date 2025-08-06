@@ -59,9 +59,18 @@ export async function middleware(request: NextRequest) {
       authHeader.startsWith('Bearer ') && 
       authHeader.substring(7) === process.env.SUPABASE_SERVICE_ROLE_KEY
     
-    // Check for cron secret
+    // Check for cron secret in Authorization header or x-cron-secret header
+    const isCronAuthHeader = authHeader && 
+      authHeader.startsWith('Bearer ') && 
+      authHeader.substring(7) === process.env.CRON_SECRET
     const cronSecret = request.headers.get('x-cron-secret')
-    const isCronRequest = cronSecret === process.env.CRON_SECRET
+    const isCronRequest = isCronAuthHeader || cronSecret === process.env.CRON_SECRET
+    
+    // Allow cron endpoints with proper authentication
+    const isCronEndpoint = request.nextUrl.pathname.startsWith('/api/cron/')
+    if (isCronEndpoint && isCronRequest) {
+      return response
+    }
     
     if (!isPublicEndpoint && !isServiceRole && !isCronRequest && (!user || error)) {
       return NextResponse.json(
