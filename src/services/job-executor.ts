@@ -135,7 +135,9 @@ export class JobExecutor {
         storefront_id: scanType === 'single_seller' ? schedule?.storefront_id : null,
         status: 'completed',
         total_products: 0,
-        total_opportunities: 0,
+        opportunities_found: 0,
+        started_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
         created_at: new Date().toISOString()
       }
       

@@ -10,6 +10,8 @@ const nextConfig = {
       bodySizeLimit: '10mb',
     },
   },
+  // Allow cross-origin requests in development
+  allowedDevOrigins: ['http://localhost:3000', 'http://172.150.121.60:3000'],
   async headers() {
     return [
       {
