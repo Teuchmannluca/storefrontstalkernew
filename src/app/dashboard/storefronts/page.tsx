@@ -161,45 +161,14 @@ export default function StorefrontsPage() {
   }
 
   const handleUpdateAllStorefronts = async () => {
-    console.log('🚀 Update All button clicked!')
+    console.log('🚀 Starting sequential update with 3-minute intervals!')
     if (isUpdatingAll) {
       console.log('⚠️ Already updating, skipping')
       return
     }
     
-    // Check token availability first
-    const tokenResponse = await fetch('/api/keepa/tokens')
-    const tokenData = await tokenResponse.json()
-    
-    if (!tokenData.success) {
-      alert('Cannot check Keepa token status. Please try again.')
-      return
-    }
-    
-    const tokensNeeded = storefronts.length * 50
-    const canProcessAll = tokenData.availableTokens >= tokensNeeded
-    
-    let confirmMessage = `This will update all ${storefronts.length} storefronts step by step.\n\n`
-    confirmMessage += `Keepa tokens needed: ${tokensNeeded}\n`
-    confirmMessage += `Available tokens: ${tokenData.availableTokens}\n\n`
-    
-    if (canProcessAll) {
-      confirmMessage += `✅ Sufficient tokens available. All storefronts will be processed immediately.\n`
-      confirmMessage += `Estimated time: ${storefronts.length * 2} minutes\n\nContinue?`
-    } else {
-      const canProcessNow = Math.floor(tokenData.availableTokens / 50)
-      confirmMessage += `⚠️ Only ${canProcessNow} storefronts can be processed now.\n`
-      confirmMessage += `Remaining will wait for token regeneration (+22/min).\n\nContinue?`
-    }
-    
-    if (!confirm(confirmMessage)) {
-      console.log('❌ User cancelled update')
-      return
-    }
-
-    console.log('✅ Starting sequential update process...')
     setIsUpdatingAll(true)
-    const operationId = `bulk-update-${Date.now()}`
+    const operationId = `sequential-update-${Date.now()}`
     
     // Add operation to global status
     addSyncOperation({
@@ -207,7 +176,7 @@ export default function StorefrontsPage() {
       type: 'bulk_update',
       storefront: `All Storefronts (${storefronts.length})`,
       status: 'active',
-      message: 'Processing storefronts one by one...',
+      message: 'Starting sequential update with 3-minute intervals...',
       progress: {
         current: 0,
         total: storefronts.length
@@ -216,88 +185,97 @@ export default function StorefrontsPage() {
     
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      let processedCount = 0
-      let successCount = 0
-      let errorCount = 0
       
-      // Process each storefront sequentially
-      for (let i = 0; i < storefronts.length; i++) {
-        const storefront = storefronts[i]
-        processedCount++
-        
-        updateSyncOperation(operationId, {
-          message: `Processing ${storefront.name} (${processedCount}/${storefronts.length})...`,
-          progress: {
-            current: processedCount,
-            total: storefronts.length
-          }
+      // Call the new sequential update API
+      const response = await fetch('/api/storefronts/update-sequential', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
+        body: JSON.stringify({
+          fetchTitles: false // Don't fetch titles immediately to save time
         })
+      })
+      
+      const result = await response.json()
+      
+      if (response.ok) {
+        console.log('✅ Sequential update started:', result)
         
-        try {
-          const response = await fetch('/api/sync-storefront-keepa', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${session?.access_token}`
-            },
-            body: JSON.stringify({
-              storefrontId: storefront.id,
-              sellerId: storefront.seller_id
+        // Show confirmation message
+        const estimatedTime = storefronts.length * 3 // 3 minutes per storefront
+        alert(`Sequential update started!\n\nProcessing ${storefronts.length} storefronts\nEstimated time: ${estimatedTime} minutes\n\nEach storefront will be scanned with a 3-minute interval.`)
+        
+        // Poll for progress updates
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusResponse = await fetch('/api/storefronts/update-sequential', {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${session?.access_token}`
+              }
             })
-          })
-          
-          const result = await response.json()
-          
-          if (response.ok && result.success) {
-            successCount++
-            console.log(`✅ ${storefront.name}: ${result.message}`)
-          } else {
-            errorCount++
-            console.log(`❌ ${storefront.name}: ${result.error}`)
             
-            // If it's a token limit error, wait ~3 minutes before continuing
-            if (result.error?.includes('Insufficient Keepa API tokens')) {
-              const waitMinutes = Math.max(result.waitTimeMinutes || 0, 3) // At least 3 minutes
-              updateSyncOperation(operationId, {
-                message: `Need tokens: waiting ${waitMinutes} minutes (22 tokens/min regeneration)...`
-              })
+            if (statusResponse.ok) {
+              const status = await statusResponse.json()
               
-              // Wait for tokens to regenerate (show countdown)
-              for (let remaining = waitMinutes; remaining > 0; remaining--) {
+              if (status.isProcessing) {
+                const message = status.currentStorefront 
+                  ? `Processing: ${status.currentStorefront} (${status.processedStorefronts}/${status.totalStorefronts})`
+                  : status.nextStorefrontTime
+                    ? `Waiting until ${new Date(status.nextStorefrontTime).toLocaleTimeString()} for next storefront...`
+                    : `Processed ${status.processedStorefronts}/${status.totalStorefronts} storefronts`
+                
                 updateSyncOperation(operationId, {
-                  message: `Waiting for tokens: ${remaining} minutes remaining...`
+                  message,
+                  progress: {
+                    current: status.processedStorefronts,
+                    total: status.totalStorefronts
+                  }
                 })
-                await new Promise(resolve => setTimeout(resolve, 60000)) // 1 minute
+              } else {
+                // Process completed
+                clearInterval(pollInterval)
+                
+                const successful = status.completedStorefronts?.filter((s: any) => s.success).length || 0
+                const failed = status.completedStorefronts?.filter((s: any) => !s.success).length || 0
+                
+                updateSyncOperation(operationId, {
+                  status: 'completed',
+                  message: `Completed: ${successful} successful, ${failed} failed`
+                })
+                
+                setIsUpdatingAll(false)
+                fetchStorefronts() // Refresh data
               }
             }
+          } catch (error) {
+            console.error('Error polling status:', error)
           }
-        } catch (error) {
-          errorCount++
-          console.error(`❌ Error processing ${storefront.name}:`, error)
-        }
+        }, 5000) // Poll every 5 seconds
         
-        // Small delay between storefronts
-        if (i < storefronts.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 2000))
-        }
+        // Set timeout to clear interval after reasonable time (e.g., 4 hours)
+        setTimeout(() => {
+          clearInterval(pollInterval)
+          setIsUpdatingAll(false)
+        }, 4 * 60 * 60 * 1000)
+        
+      } else {
+        console.error('❌ Failed to start sequential update:', result)
+        updateSyncOperation(operationId, {
+          status: 'error',
+          message: result.message || 'Failed to start sequential update'
+        })
+        setIsUpdatingAll(false)
       }
       
-      updateSyncOperation(operationId, {
-        status: 'completed',
-        message: `Completed: ${successCount} successful, ${errorCount} failed`
-      })
-      
-      // Refresh storefronts data
-      fetchStorefronts()
-      
     } catch (error) {
-      console.error('❌ Error in bulk update:', error)
+      console.error('❌ Error starting sequential update:', error)
       updateSyncOperation(operationId, {
         status: 'error',
-        message: 'Bulk update process failed'
+        message: 'Failed to start sequential update'
       })
-    } finally {
-      console.log('🏁 Update process finished')
       setIsUpdatingAll(false)
     }
   }

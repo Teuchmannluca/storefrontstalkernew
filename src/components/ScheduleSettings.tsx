@@ -8,7 +8,8 @@ import {
   GlobeAltIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  PlayIcon
 } from '@heroicons/react/24/outline'
 
 interface ScheduleSettings {
@@ -71,13 +72,36 @@ export default function ScheduleSettings({ userId }: ScheduleSettingsProps) {
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [triggering, setTriggering] = useState(false)
+  const [schedulerStatus, setSchedulerStatus] = useState<any>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
 
   useEffect(() => {
     if (userId) {
       loadSettings()
+      loadSchedulerStatus()
     }
   }, [userId])
+
+  const loadSchedulerStatus = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) return
+
+      const response = await fetch('/api/scheduler/status', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setSchedulerStatus(data)
+      }
+    } catch (error) {
+      console.error('Error loading scheduler status:', error)
+    }
+  }
 
   const loadSettings = async () => {
     try {
@@ -158,12 +182,73 @@ export default function ScheduleSettings({ userId }: ScheduleSettingsProps) {
         }))
       }
 
-      setMessage({ type: 'success', text: 'Schedule settings saved successfully!' })
+      // Update scheduler via API
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.access_token) {
+        const response = await fetch('/api/scheduler/update', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({
+            type: 'storefront',
+            settings: settingsToSave
+          })
+        })
+
+        if (!response.ok) {
+          console.error('Failed to update scheduler')
+        } else {
+          await loadSchedulerStatus()
+        }
+      }
+
+      setMessage({ type: 'success', text: 'Schedule settings saved and scheduler updated!' })
     } catch (error) {
       console.error('Error saving schedule settings:', error)
       setMessage({ type: 'error', text: 'Failed to save schedule settings' })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const triggerManualRun = async () => {
+    setTriggering(true)
+    setMessage(null)
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        throw new Error('No session')
+      }
+
+      const response = await fetch('/api/scheduler/trigger', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ type: 'storefront' })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to trigger update')
+      }
+
+      setMessage({ type: 'success', text: 'Update triggered successfully! Check progress in a moment.' })
+      
+      // Reload status after a delay
+      setTimeout(() => {
+        loadSchedulerStatus()
+      }, 2000)
+    } catch (error) {
+      console.error('Error triggering update:', error)
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Failed to trigger update' })
+    } finally {
+      setTriggering(false)
     }
   }
 
@@ -322,6 +407,36 @@ export default function ScheduleSettings({ userId }: ScheduleSettingsProps) {
         </>
       )}
 
+      {/* Manual Trigger Button */}
+      <div className="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+        <div>
+          <h4 className="text-sm font-medium text-indigo-900">Manual Update</h4>
+          <p className="text-sm text-indigo-700">Run storefront update immediately</p>
+        </div>
+        <button
+          onClick={triggerManualRun}
+          disabled={triggering || schedulerStatus?.schedules?.storefront?.status?.isRunning}
+          className="inline-flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {triggering ? (
+            <>
+              <ArrowPathIcon className="w-5 h-5 animate-spin" />
+              Triggering...
+            </>
+          ) : schedulerStatus?.schedules?.storefront?.status?.isRunning ? (
+            <>
+              <ArrowPathIcon className="w-5 h-5 animate-spin" />
+              Running...
+            </>
+          ) : (
+            <>
+              <PlayIcon className="w-5 h-5" />
+              Run Now
+            </>
+          )}
+        </button>
+      </div>
+
       {/* Status Information */}
       {settings.enabled && (
         <div className="bg-gray-50 rounded-lg p-4 space-y-3">
@@ -333,7 +448,10 @@ export default function ScheduleSettings({ userId }: ScheduleSettingsProps) {
               <ClockIcon className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
               <div className="text-sm text-blue-800">
                 <p className="font-medium mb-1">How automatic updates work:</p>
-                <p>The server checks every hour for due updates. When your scheduled time arrives, all your storefronts will be updated automatically using the Keepa API.</p>
+                <p>The built-in scheduler runs on your server and checks for due updates based on your schedule. All storefronts will be updated automatically using the Keepa API.</p>
+                {schedulerStatus?.system?.initialized && (
+                  <p className="mt-1 text-xs">Scheduler Status: ✅ Active ({schedulerStatus.system.activeSchedules} schedules)</p>
+                )}
               </div>
             </div>
           </div>

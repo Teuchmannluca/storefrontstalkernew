@@ -46,7 +46,7 @@ export class KeepaPersistentRateLimiter {
         user_id: this.userId,
         available_tokens: 200, // Start with more tokens for initial setup
         max_tokens: 500, // Allow accumulation of more tokens
-        tokens_per_minute: 22,
+        tokens_per_minute: 1, // Keepa regenerates 1 token per minute
         last_refill_at: new Date().toISOString()
       }
 
@@ -75,7 +75,7 @@ export class KeepaPersistentRateLimiter {
       }
     }
 
-    // Refill tokens based on time passed
+    // Refill tokens based on time passed (1 token per minute for Keepa)
     const minutesPassed = (now - tokenState.lastRefillAt.getTime()) / (1000 * 60)
     const tokensToAdd = Math.floor(minutesPassed * tokenState.tokensPerMinute)
     
@@ -151,7 +151,7 @@ export class KeepaPersistentRateLimiter {
       const waitMinutes = tokensShort / state.tokensPerMinute
       const waitMs = Math.max(1000, waitMinutes * 60 * 1000) // At least 1 second
 
-      console.log(`Waiting ${Math.ceil(waitMs / 1000)}s for ${tokensNeeded} Keepa tokens (have ${state.availableTokens}, need ${tokensShort} more)`)
+      console.log(`Waiting ${Math.ceil(waitMs / 1000)}s (${Math.ceil(waitMinutes)} minutes) for ${tokensNeeded} Keepa tokens (have ${state.availableTokens}, need ${tokensShort} more at ${state.tokensPerMinute} token/min)`)
       
       await new Promise(resolve => setTimeout(resolve, waitMs))
       

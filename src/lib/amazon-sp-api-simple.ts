@@ -326,6 +326,16 @@ export class AmazonSPAPISimple {
     return null
   }
 
+  static extractCategory(item: CatalogItem): string | null {
+    if (!item.salesRanks || item.salesRanks.length === 0) return null
+    
+    const ranks = item.salesRanks[0].classificationRanks
+    if (ranks.length === 0) return null
+    
+    // Get the title of the primary category
+    return ranks[0].title || null
+  }
+
   static extractSalesRank(item: CatalogItem): number | null {
     if (!item.salesRanks || item.salesRanks.length === 0) return null
     
