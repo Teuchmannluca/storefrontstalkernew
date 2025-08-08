@@ -23,7 +23,7 @@ export class KeepaStorefrontAPI {
   private domain: number;
   private currentTokens: number;
   private keepaTimestamp: number = 0; // Timestamp from Keepa API response
-  private readonly TOKENS_PER_MINUTE = 22;
+  private readonly TOKENS_PER_MINUTE = 20;
   private lastApiCallTime: number = 0;
   private readonly MIN_TIME_BETWEEN_CALLS = 2750; // ~2.75 seconds between calls for safety
   private hasInitialized: boolean = false; // Track if we've made first API call

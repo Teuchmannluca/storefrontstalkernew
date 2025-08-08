@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { KeepaStorefrontAPI } from '@/lib/keepa-storefront';
 import { SPAPICatalogClient } from '@/lib/sp-api-catalog';
 import { requireAuth, unauthorizedResponse, serverErrorResponse } from '@/lib/auth-helpers';
+import { KeepaPersistentRateLimiter } from '@/lib/keepa-persistent-rate-limiter';
 import { getServiceRoleClient } from '@/lib/supabase-server';
 import { notificationService } from '@/lib/notification-service';
 
@@ -34,11 +35,30 @@ export async function POST(request: NextRequest) {
     console.log('Seller ID:', sellerId);
     const keepaStorefront = new KeepaStorefrontAPI(keepaApiKey, keepaDomain);
 
-    // Initialize tokens from API response (don't artificially reset)
+    // Initialize tokens from API response (we will also use our persistent limiter)
     keepaStorefront.initializeTokensFromAPI();
 
-    // Step 1: Make the API call first to get actual token count
-    // Don't pre-check tokens since we start with 0 - let the API tell us the real count
+    // Use a persistent token limiter to avoid calling Keepa too early
+    const rateLimiter = new KeepaPersistentRateLimiter(user.id);
+    const availableNow = await rateLimiter.getAvailableTokens();
+    if (availableNow < 50) {
+      const waitMs = await rateLimiter.getWaitTimeForTokens(50);
+      const tokensNeeded = 50 - availableNow;
+      return NextResponse.json(
+        {
+          error: 'Insufficient Keepa API tokens available',
+          availableTokens: availableNow,
+          requiredTokens: 50,
+          tokensNeeded,
+          waitTimeSeconds: Math.ceil(waitMs / 1000),
+          waitTimeMinutes: Math.ceil(waitMs / 60000),
+          regenerationRate: '20 tokens per minute'
+        },
+        { status: 429 }
+      );
+    }
+    // Reserve tokens so concurrent requests do not start too early
+    await rateLimiter.consumeTokens(50);
 
     // Step 2: Fetch ASINs from seller storefront (this costs 50 tokens)
     console.log('Fetching ASINs from seller storefront...');
@@ -50,7 +70,7 @@ export async function POST(request: NextRequest) {
       if (error.message?.includes('Insufficient Keepa API tokens')) {
         const currentTokens = keepaStorefront.getAvailableTokens();
         const tokensNeeded = 50 - currentTokens;
-        const waitTimeMinutes = Math.ceil(tokensNeeded / 22); // 22 tokens per minute
+        const waitTimeMinutes = Math.ceil(tokensNeeded / 20); // 20 tokens per minute
         
         return NextResponse.json(
           { 
@@ -60,7 +80,7 @@ export async function POST(request: NextRequest) {
             tokensNeeded,
             waitTimeSeconds: waitTimeMinutes * 60,
             waitTimeMinutes,
-            regenerationRate: '22 tokens per minute'
+            regenerationRate: '20 tokens per minute'
           },
           { status: 429 }
         );
@@ -68,6 +88,18 @@ export async function POST(request: NextRequest) {
       throw error; // Re-throw other errors
     }
     
+    // Sync our persistent tracker with real Keepa token info if available
+    if (asinResult?.tokenInfo) {
+      await supabase
+        .from('keepa_token_tracker')
+        .update({
+          available_tokens: asinResult.tokenInfo.tokensLeft,
+          last_refill_at: new Date(asinResult.tokenInfo.timestamp).toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', user.id);
+    }
+
     const asins = asinResult.asinList;
     console.log(`Found ${asins.length} ASINs for seller ${sellerId}`);
     

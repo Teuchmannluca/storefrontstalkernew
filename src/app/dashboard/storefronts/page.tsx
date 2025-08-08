@@ -26,7 +26,6 @@ import { Fragment } from 'react'
 import SyncButton from '@/components/SyncButton'
 import { useSyncStatus } from '@/contexts/SyncStatusContext'
 import UpdateProgressBar from '@/components/UpdateProgressBar'
-import KeepaTokenStatus from '@/components/KeepaTokenStatus'
 
 interface Storefront {
   id: string
@@ -361,11 +360,6 @@ export default function StorefrontsPage() {
 
         {/* Storefronts Content */}
         <div className="p-8">
-          {/* Keepa Token Status */}
-          <div className="mb-6">
-            <KeepaTokenStatus />
-          </div>
-
           {/* Controls Bar */}
           <div className="mb-6 flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -393,29 +387,6 @@ export default function StorefrontsPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              {/* Test Status Bar Button - Remove this after testing */}
-              <button
-                onClick={() => {
-                  const testId = `test-${Date.now()}`
-                  addSyncOperation({
-                    id: testId,
-                    type: 'storefront_sync',
-                    storefront: 'Test Storefront',
-                    status: 'active',
-                    message: 'Testing status bar functionality...'
-                  })
-                  setTimeout(() => {
-                    updateSyncOperation(testId, {
-                      status: 'completed',
-                      message: 'Test completed successfully!'
-                    })
-                  }, 3000)
-                }}
-                className="px-4 py-2 bg-purple-500 text-white rounded-xl text-sm font-medium hover:bg-purple-600"
-              >
-                Test Status Bar
-              </button>
-              
               {/* Sort Dropdown */}
               <Menu as="div" className="relative">
                 <Menu.Button className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">

@@ -119,7 +119,7 @@ export class KeepaSequentialManager {
     
     if (availableTokens < this.INITIAL_TOKENS_REQUIRED) {
       const tokensShort = this.INITIAL_TOKENS_REQUIRED - availableTokens
-      const waitMinutes = Math.ceil(tokensShort / 22) // 22 tokens per minute refill rate
+      const waitMinutes = Math.ceil(tokensShort / 20) // 20 tokens per minute refill rate
       
       return {
         message: `Not enough tokens to start. Need ${this.INITIAL_TOKENS_REQUIRED}, have ${availableTokens}`,
@@ -202,7 +202,7 @@ export class KeepaSequentialManager {
           
           // Wait for tokens to refill (22 per minute)
           const tokensNeeded = this.TOKENS_PER_STOREFRONT - currentTokens
-          const waitTime = Math.ceil(tokensNeeded / 22) * 60 * 1000
+          const waitTime = Math.ceil(tokensNeeded / 20) * 60 * 1000
           
           console.log(`⏳ Waiting ${Math.ceil(waitTime / 60000)} minutes for tokens to refill...`)
           await this.delay(waitTime)
@@ -609,7 +609,7 @@ export class KeepaSequentialManager {
 
   async getTokenStatus() {
     const availableTokens = await this.rateLimiter.getAvailableTokens()
-    const tokenRefillRate = 22 // tokens per minute
+    const tokenRefillRate = 20 // tokens per minute
     
     return {
       availableTokens,

@@ -44,9 +44,9 @@ export class KeepaPersistentRateLimiter {
       // Initialize new tracker with default values
       const newTracker = {
         user_id: this.userId,
-        available_tokens: 200, // Start with more tokens for initial setup
-        max_tokens: 500, // Allow accumulation of more tokens
-        tokens_per_minute: 1, // Keepa regenerates 1 token per minute
+        available_tokens: 0, // Start from zero; will accumulate based on refill rate
+        max_tokens: 5000, // Allow accumulation up to a higher ceiling
+        tokens_per_minute: 20, // Keepa regenerates 20 tokens per minute for this account
         last_refill_at: new Date().toISOString()
       }
 
@@ -75,7 +75,7 @@ export class KeepaPersistentRateLimiter {
       }
     }
 
-    // Refill tokens based on time passed (1 token per minute for Keepa)
+    // Refill tokens based on time passed (uses configured tokens_per_minute)
     const minutesPassed = (now - tokenState.lastRefillAt.getTime()) / (1000 * 60)
     const tokensToAdd = Math.floor(minutesPassed * tokenState.tokensPerMinute)
     
