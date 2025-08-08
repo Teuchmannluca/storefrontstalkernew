@@ -25,7 +25,7 @@ import { Menu, Transition } from '@headlessui/react'
 import { Fragment } from 'react'
 import SyncButton from '@/components/SyncButton'
 import { useSyncStatus } from '@/contexts/SyncStatusContext'
-import UpdateProgressBar from '@/components/UpdateProgressBar'
+import ScanProgressPanel from '@/components/ScanProgressPanel'
 
 interface Storefront {
   id: string
@@ -710,8 +710,8 @@ export default function StorefrontsPage() {
         onSuccess={fetchStorefronts}
       />
 
-      {/* Update Progress Bar */}
-      <UpdateProgressBar />
+      {/* Scan Progress Panel - Shows at top center when scanning */}
+      <ScanProgressPanel />
     </div>
   )
 }

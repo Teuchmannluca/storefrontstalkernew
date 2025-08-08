@@ -50,6 +50,7 @@ export class KeepaSequentialManager {
   private readonly MIN_TOKENS_THRESHOLD = 100 // Minimum tokens before waiting
   private readonly SHORT_DELAY_MS = 5000 // 5 seconds between storefronts when tokens are sufficient
   private readonly INITIAL_TOKENS_REQUIRED = 50
+  private readonly INTERVAL_BETWEEN_SCANS_MS = 3 * 60 * 1000 // 3 minutes
 
   constructor(userId: string) {
     this.userId = userId
