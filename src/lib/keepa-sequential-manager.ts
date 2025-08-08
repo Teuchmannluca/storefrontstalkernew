@@ -47,7 +47,8 @@ export class KeepaSequentialManager {
   
   // Configuration
   private readonly TOKENS_PER_STOREFRONT = 50
-  private readonly INTERVAL_BETWEEN_SCANS_MS = 3 * 60 * 1000 // 3 minutes
+  private readonly MIN_TOKENS_THRESHOLD = 100 // Minimum tokens before waiting
+  private readonly SHORT_DELAY_MS = 5000 // 5 seconds between storefronts when tokens are sufficient
   private readonly INITIAL_TOKENS_REQUIRED = 50
 
   constructor(userId: string) {
@@ -233,10 +234,18 @@ export class KeepaSequentialManager {
         console.log(`📊 Progress: ${progress.processedStorefronts}/${progress.totalStorefronts} storefronts`)
         console.log(`🪙 Tokens: ${remainingTokens} available, ${progress.tokensUsed} used total`)
         
-        // Wait 3 minutes before next storefront (unless it's the last one)
+        // Only wait if we're low on tokens (less than 100) to avoid hitting limits
+        // Otherwise proceed immediately to the next storefront
         if (i < storefronts.length - 1) {
-          console.log(`⏰ Waiting 3 minutes before next storefront...`)
-          await this.delay(this.INTERVAL_BETWEEN_SCANS_MS)
+          if (remainingTokens < 100) {
+            const waitMinutes = Math.ceil((100 - remainingTokens) / 20) // 20 tokens per minute
+            console.log(`⏰ Low tokens (${remainingTokens}), waiting ${waitMinutes} minutes to accumulate more...`)
+            await this.delay(waitMinutes * 60 * 1000)
+          } else {
+            // Small delay (5 seconds) just to avoid hammering the API
+            console.log(`✅ Sufficient tokens (${remainingTokens}), proceeding to next storefront in 5 seconds...`)
+            await this.delay(5000)
+          }
         }
         
       } catch (error) {
