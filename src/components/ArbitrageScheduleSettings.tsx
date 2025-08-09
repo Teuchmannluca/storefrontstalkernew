@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import FrequencySelector, { FrequencyConfig } from './FrequencySelector'
 import {
   ClockIcon,
   CalendarIcon,
@@ -11,16 +12,15 @@ import {
   ArrowPathIcon,
   BuildingStorefrontIcon,
   UserGroupIcon,
-  PlayIcon
+  PlayIcon,
+  ChartBarIcon
 } from '@heroicons/react/24/outline'
 
 interface ArbitrageScheduleSettings {
   id?: string
   enabled: boolean
-  frequency: 'daily' | 'every_2_days' | 'weekly'
-  time_of_day: string
+  frequency_config: FrequencyConfig
   timezone: string
-  days_of_week: number[]
   scan_type: 'single' | 'all'
   storefront_id?: string
   last_run?: string
@@ -37,17 +37,6 @@ interface Storefront {
   seller_id: string
 }
 
-const FREQUENCY_OPTIONS = [
-  { value: 'daily', label: 'Daily', description: 'Scan every day' },
-  { value: 'every_2_days', label: 'Every 2 days', description: 'Scan every other day' },
-  { value: 'weekly', label: 'Weekly', description: 'Scan on selected days of the week' }
-]
-
-const TIME_OPTIONS = Array.from({ length: 24 }, (_, i) => {
-  const hour = i.toString().padStart(2, '0')
-  const time12 = i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`
-  return { value: `${hour}:00`, label: `${hour}:00 (${time12})` }
-})
 
 const TIMEZONE_OPTIONS = [
   { value: 'UTC', label: 'UTC' },
@@ -62,23 +51,17 @@ const TIMEZONE_OPTIONS = [
   { value: 'Australia/Sydney', label: 'Sydney (AEDT/AEST)' }
 ]
 
-const DAYS_OF_WEEK = [
-  { value: 1, label: 'Mon' },
-  { value: 2, label: 'Tue' },
-  { value: 3, label: 'Wed' },
-  { value: 4, label: 'Thu' },
-  { value: 5, label: 'Fri' },
-  { value: 6, label: 'Sat' },
-  { value: 7, label: 'Sun' }
-]
 
 export default function ArbitrageScheduleSettings({ userId }: ArbitrageScheduleSettingsProps) {
   const [settings, setSettings] = useState<ArbitrageScheduleSettings>({
     enabled: false,
-    frequency: 'daily',
-    time_of_day: '02:00',
+    frequency_config: {
+      frequencyType: 'simple',
+      frequency: 'daily',
+      timeOfDay: '03:00',
+      daysOfWeek: [1, 2, 3, 4, 5, 6, 7]
+    },
     timezone: 'UTC',
-    days_of_week: [1, 2, 3, 4, 5, 6, 7],
     scan_type: 'single'
   })
   const [storefronts, setStorefronts] = useState<Storefront[]>([])
@@ -132,11 +115,20 @@ export default function ArbitrageScheduleSettings({ userId }: ArbitrageScheduleS
         setSettings({
           id: data.id,
           enabled: data.enabled,
-          frequency: data.frequency,
-          time_of_day: data.time_of_day,
-          timezone: data.timezone,
-          days_of_week: data.days_of_week || [1, 2, 3, 4, 5, 6, 7],
-          scan_type: data.scan_type,
+          frequency_config: {
+            frequencyType: data.frequency_type || 'simple',
+            frequency: data.frequency || 'daily',
+            hourlyInterval: data.hourly_interval,
+            dailyTimes: data.daily_times,
+            timeOfDay: data.time_of_day || '03:00',
+            daysOfWeek: data.days_of_week || [1, 2, 3, 4, 5, 6, 7],
+            businessHoursOnly: data.business_hours_only,
+            businessHoursStart: data.business_hours_start,
+            businessHoursEnd: data.business_hours_end,
+            customIntervalHours: data.custom_interval_hours
+          },
+          timezone: data.timezone || 'UTC',
+          scan_type: data.scan_type || 'single',
           storefront_id: data.storefront_id,
           last_run: data.last_run,
           next_run: data.next_run
@@ -178,10 +170,17 @@ export default function ArbitrageScheduleSettings({ userId }: ArbitrageScheduleS
       const settingsToSave = {
         user_id: userId,
         enabled: settings.enabled,
-        frequency: settings.frequency,
-        time_of_day: settings.time_of_day,
+        frequency_type: settings.frequency_config.frequencyType,
+        frequency: settings.frequency_config.frequency,
+        hourly_interval: settings.frequency_config.hourlyInterval,
+        daily_times: settings.frequency_config.dailyTimes,
+        time_of_day: settings.frequency_config.timeOfDay,
         timezone: settings.timezone,
-        days_of_week: settings.days_of_week,
+        days_of_week: settings.frequency_config.daysOfWeek,
+        business_hours_only: settings.frequency_config.businessHoursOnly,
+        business_hours_start: settings.frequency_config.businessHoursStart,
+        business_hours_end: settings.frequency_config.businessHoursEnd,
+        custom_interval_hours: settings.frequency_config.customIntervalHours,
         scan_type: settings.scan_type,
         storefront_id: settings.scan_type === 'single' ? settings.storefront_id : null
       }
@@ -287,14 +286,6 @@ export default function ArbitrageScheduleSettings({ userId }: ArbitrageScheduleS
     }
   }
 
-  const toggleDayOfWeek = (day: number) => {
-    setSettings(prev => ({
-      ...prev,
-      days_of_week: prev.days_of_week.includes(day)
-        ? prev.days_of_week.filter(d => d !== day)
-        : [...prev.days_of_week, day].sort((a, b) => a - b)
-    }))
-  }
 
   const formatDateTime = (dateString: string) => {
     if (!dateString) return 'Never'
@@ -420,73 +411,17 @@ export default function ArbitrageScheduleSettings({ userId }: ArbitrageScheduleS
             </div>
           )}
 
-          {/* Frequency Selection */}
+          {/* Frequency Configuration */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-3">
-              <CalendarIcon className="w-5 h-5 inline mr-2" />
-              Scan Frequency
+              <ChartBarIcon className="w-5 h-5 inline mr-2" />
+              Scan Schedule
             </label>
-            <div className="space-y-2">
-              {FREQUENCY_OPTIONS.map((option) => (
-                <label key={option.value} className="flex items-center cursor-pointer">
-                  <input
-                    type="radio"
-                    name="frequency"
-                    value={option.value}
-                    checked={settings.frequency === option.value}
-                    onChange={(e) => setSettings(prev => ({ ...prev, frequency: e.target.value as any }))}
-                    className="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 focus:ring-indigo-500"
-                  />
-                  <div className="ml-3">
-                    <div className="text-sm font-medium text-gray-900">{option.label}</div>
-                    <div className="text-sm text-gray-500">{option.description}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Days of Week (only for weekly) */}
-          {settings.frequency === 'weekly' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-3">
-                Days of Week
-              </label>
-              <div className="flex gap-2">
-                {DAYS_OF_WEEK.map((day) => (
-                  <button
-                    key={day.value}
-                    onClick={() => toggleDayOfWeek(day.value)}
-                    className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                      settings.days_of_week.includes(day.value)
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    }`}
-                  >
-                    {day.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Time Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <ClockIcon className="w-5 h-5 inline mr-2" />
-              Time of Day
-            </label>
-            <select
-              value={settings.time_of_day}
-              onChange={(e) => setSettings(prev => ({ ...prev, time_of_day: e.target.value }))}
-              className="block w-full px-3 py-2 bg-white border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-            >
-              {TIME_OPTIONS.map((time) => (
-                <option key={time.value} value={time.value}>
-                  {time.label}
-                </option>
-              ))}
-            </select>
+            <FrequencySelector
+              config={settings.frequency_config}
+              onChange={(config) => setSettings(prev => ({ ...prev, frequency_config: config }))}
+              showBusinessHours={true}
+            />
           </div>
 
           {/* Timezone Selection */}

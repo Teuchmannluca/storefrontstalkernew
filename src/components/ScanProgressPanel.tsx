@@ -13,7 +13,11 @@ import {
   CpuChipIcon,
   PlusIcon,
   MinusIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  ChevronUpIcon,
+  ChevronDownIcon,
+  MinusSmallIcon,
+  PlusSmallIcon
 } from '@heroicons/react/24/outline'
 
 interface ScanProgress {
@@ -46,6 +50,7 @@ interface ScanProgress {
 export default function ScanProgressPanel() {
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null)
   const [isExpanded, setIsExpanded] = useState(true)
+  const [isMinimized, setIsMinimized] = useState(false)
   const [elapsedTime, setElapsedTime] = useState(0)
 
   useEffect(() => {
@@ -165,6 +170,52 @@ export default function ScanProgressPanel() {
   const successfulScans = scanProgress.completedStorefronts.filter(s => s.success).length
   const failedScans = scanProgress.completedStorefronts.filter(s => !s.success).length
 
+  // Minimized view
+  if (isMinimized) {
+    return (
+      <div className="fixed top-4 left-1/2 transform -translate-x-1/2 w-[90%] max-w-2xl bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+        <div className="px-4 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 flex-1">
+              <BuildingStorefrontIcon className="w-5 h-5 text-white flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-4">
+                  <span className="text-sm font-semibold text-white truncate">
+                    Syncing: {scanProgress.processedStorefronts}/{scanProgress.totalStorefronts} storefronts
+                  </span>
+                  <span className="text-sm font-bold text-white">
+                    {Math.round(progressPercentage)}%
+                  </span>
+                </div>
+                <div className="mt-1">
+                  <div className="w-full bg-white/20 rounded-full h-2">
+                    <div 
+                      className="bg-white h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${progressPercentage}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+              {scanProgress.currentStorefront && (
+                <div className="flex items-center gap-2 text-white/90 text-sm">
+                  <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                  <span className="truncate max-w-[200px]">{scanProgress.currentStorefront}</span>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setIsMinimized(false)}
+              className="ml-3 p-1.5 hover:bg-white/20 rounded transition-colors flex-shrink-0"
+              title="Expand panel"
+            >
+              <PlusSmallIcon className="w-5 h-5 text-white" />
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="fixed top-20 left-1/2 transform -translate-x-1/2 w-[90%] max-w-4xl bg-white rounded-2xl shadow-2xl border border-gray-200 z-50">
       {/* Header */}
@@ -183,14 +234,24 @@ export default function ScanProgressPanel() {
               </p>
             </div>
           </div>
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-          >
-            <svg className={`w-5 h-5 text-white transform transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsMinimized(true)}
+              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+              title="Minimize panel"
+            >
+              <MinusSmallIcon className="w-5 h-5 text-white" />
+            </button>
+            <button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+              title={isExpanded ? "Collapse details" : "Expand details"}
+            >
+              <svg className={`w-5 h-5 text-white transform transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Main Progress Bar */}

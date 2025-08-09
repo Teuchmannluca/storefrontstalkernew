@@ -138,17 +138,21 @@ export async function POST(request: NextRequest) {
           data: { step: `Found ${storefronts.length} storefronts. Fetching products...`, progress: 5, scanId } 
         });
 
-        // Fetch all products from all storefronts
+        // Fetch all products from all storefronts (no limit to get all products)
         const { data: allProducts, error: productsError } = await supabase
           .from('products')
           .select('*, storefronts!inner(id, name, seller_id)')
           .in('storefront_id', storefronts.map(s => s.id))
-          .order('asin');
+          .order('asin')
+          .limit(50000); // Set high limit to ensure we get all products
 
         if (productsError || !allProducts || allProducts.length === 0) {
           sendMessage({ type: 'error', data: { error: 'No products found across storefronts' } });
           return;
         }
+
+        // Log to console for debugging
+        console.log(`Fetched ${allProducts.length} total products from ${storefronts.length} storefronts`);
 
         sendMessage({ 
           type: 'progress', 
@@ -188,10 +192,13 @@ export async function POST(request: NextRequest) {
 
         const uniqueProducts = Array.from(uniqueProductsMap.values());
         
+        // Log deduplication results
+        console.log(`Deduplicated to ${uniqueProducts.length} unique ASINs from ${allProducts.length} total products`);
+        
         sendMessage({ 
           type: 'progress', 
           data: { 
-            step: `Found ${uniqueProducts.length} unique ASINs. Checking blacklist...`, 
+            step: `Found ${uniqueProducts.length} unique ASINs from ${allProducts.length} products. Checking blacklist...`, 
             progress: 13 
           } 
         });
@@ -250,7 +257,7 @@ export async function POST(request: NextRequest) {
         sendMessage({ 
           type: 'progress', 
           data: { 
-            step: `Analyzing ${finalUniqueProducts.length} unique ASINs (from ${allProducts.length} total products across ${storefronts.length} storefronts)...`, 
+            step: `Starting analysis of ${finalUniqueProducts.length} unique ASINs (collected from ${allProducts.length} total product listings across ${storefronts.length} storefronts)...`, 
             progress: 15 
           } 
         });
