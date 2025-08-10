@@ -241,9 +241,30 @@ export default function RecentScansPage() {
           // Update viewing scan
           setViewingScan((prev: any) => prev ? { ...prev, ...updatedScan } : null)
           
-          // Update opportunities
+          // Transform opportunities to the expected format
           if (fetchedOpportunities && fetchedOpportunities.length > 0) {
-            setOpportunities(fetchedOpportunities)
+            const transformedOpportunities = fetchedOpportunities.map((opp: any) => ({
+              asin: opp.asin,
+              productName: opp.product_name,
+              productImage: opp.product_image,
+              targetPrice: opp.target_price,
+              amazonFees: opp.amazon_fees,
+              referralFee: opp.referral_fee,
+              digitalServicesFee: opp.digital_services_fee,
+              ukCompetitors: opp.uk_competitors,
+              ukSalesRank: opp.uk_sales_rank,
+              salesPerMonth: opp.sales_per_month,
+              bestOpportunity: {
+                marketplace: opp.best_source_marketplace,
+                sourcePrice: opp.best_source_price,
+                sourcePriceGBP: opp.best_source_price_gbp,
+                profit: opp.best_profit,
+                roi: opp.best_roi
+              },
+              euPrices: opp.all_marketplace_prices?.euPrices || [],
+              profitCategory: opp.profit_category
+            }))
+            setOpportunities(transformedOpportunities)
           }
           
           setLoadingScanResults(false)
