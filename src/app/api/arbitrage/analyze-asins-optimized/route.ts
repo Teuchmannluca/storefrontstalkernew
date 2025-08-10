@@ -71,7 +71,8 @@ class RateLimiter {
       return fn();
     });
     
-    this.requestQueue.set(key, currentRequest.catch(() => {}));
+    // Store as Promise<void> to maintain type consistency
+    this.requestQueue.set(key, currentRequest.then(() => {}).catch(() => {}));
     return currentRequest;
   }
 }
