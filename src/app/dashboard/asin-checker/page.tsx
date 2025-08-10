@@ -397,7 +397,7 @@ export default function ASINCheckerPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('No session found')
       
-      const response = await fetch('/api/arbitrage/analyze-asins-optimized', {
+      const response = await fetch('/api/arbitrage/analyze-asins-stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
