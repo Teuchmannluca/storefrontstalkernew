@@ -199,6 +199,77 @@ export default function RecentScansPage() {
     }
   }
 
+  const handleLoadRunningScan = async (scanId: string) => {
+    console.log('handleLoadRunningScan called with:', scanId)
+    setLoadingScanResults(true)
+    setOpportunities([])
+    setSelectedDeals(new Set())
+    
+    try {
+      // Find the scan in our current data
+      const scan = savedScans.find((s: any) => s.id === scanId)
+      if (!scan) {
+        throw new Error('Scan not found')
+      }
+      
+      setViewingScan(scan)
+      
+      // Start polling for scan progress
+      const pollScanProgress = async () => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession()
+          if (!session) throw new Error('No session')
+          
+          const response = await fetch(`/api/arbitrage/scan-progress/${scanId}`, {
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`
+            }
+          })
+          
+          if (!response.ok) {
+            throw new Error('Failed to fetch scan progress')
+          }
+          
+          const data = await response.json()
+          const { scan: updatedScan, opportunities: fetchedOpportunities } = data
+          
+          // Update the scan in our list
+          setSavedScans(prevScans => prevScans.map((s: any) => 
+            s.id === scanId ? { ...s, ...updatedScan } : s
+          ))
+          
+          // Update viewing scan
+          setViewingScan((prev: any) => prev ? { ...prev, ...updatedScan } : null)
+          
+          // Update opportunities
+          if (fetchedOpportunities && fetchedOpportunities.length > 0) {
+            setOpportunities(fetchedOpportunities)
+          }
+          
+          setLoadingScanResults(false)
+          
+          // Continue polling if still running
+          if (updatedScan.status === 'running') {
+            setTimeout(pollScanProgress, 5000) // Poll every 5 seconds
+          } else if (updatedScan.status === 'completed') {
+            // Fetch all opportunities once completed
+            await handleLoadScan(scanId)
+          }
+        } catch (error) {
+          console.error('Error polling scan progress:', error)
+          setLoadingScanResults(false)
+        }
+      }
+      
+      // Start polling
+      pollScanProgress()
+      
+    } catch (error) {
+      console.error('Error loading running scan:', error)
+      setLoadingScanResults(false)
+    }
+  }
+
   const handleLoadScan = async (scanId: string) => {
     console.log('handleLoadScan called with:', scanId)
     setLoadingScanResults(true)
@@ -401,6 +472,8 @@ export default function RecentScansPage() {
         return 'Single Storefront'
       case 'all_storefronts':
         return 'All Storefronts'
+      case 'asin_check':
+        return 'ASIN Checker'
       default:
         return type
     }
@@ -414,6 +487,8 @@ export default function RecentScansPage() {
         return 'bg-blue-100 text-blue-700 border-blue-200'
       case 'all_storefronts':
         return 'bg-green-100 text-green-700 border-green-200'
+      case 'asin_check':
+        return 'bg-amber-100 text-amber-700 border-amber-200'
       default:
         return 'bg-gray-100 text-gray-700 border-gray-200'
     }
@@ -614,9 +689,11 @@ export default function RecentScansPage() {
               {/* Scan Results Header */}
               <div className="mb-8">
                 <div className="flex items-center justify-between">
-                  <div>
+                  <div className="w-full">
                     <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                      {viewingScan.storefront_name || 'All Storefronts'} - Scan Results
+                      {viewingScan.scan_type === 'asin_check' 
+                        ? 'ASIN Checker - Scan Results' 
+                        : `${viewingScan.storefront_name || 'All Storefronts'} - Scan Results`}
                     </h1>
                     <div className="flex items-center gap-4 text-sm text-gray-600">
                       <span>Started: {formatDateTime(viewingScan.started_at)}</span>
@@ -625,12 +702,83 @@ export default function RecentScansPage() {
                       </span>
                       <span className="flex items-center gap-1">
                         <TrophyIcon className="w-4 h-4" />
-                        {viewingScan.opportunities_found} opportunities
+                        {viewingScan.opportunities_found || 0} opportunities
                       </span>
                     </div>
+                    
+                    {/* Progress bar for running scans */}
+                    {viewingScan.status === 'running' && (
+                      <div className="mt-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-medium text-gray-700">
+                            {viewingScan.current_step || 'Processing...'}
+                          </span>
+                          <span className="text-sm font-medium text-blue-600">
+                            {viewingScan.progress_percentage || 0}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2.5">
+                          <div 
+                            className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
+                            style={{ width: `${viewingScan.progress_percentage || 0}%` }}
+                          />
+                        </div>
+                        {viewingScan.processed_count > 0 && (
+                          <p className="text-sm text-gray-600 mt-2">
+                            Processed {viewingScan.processed_count} items
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
+              
+              {/* Statistics Summary - Only for ASIN Checker scans */}
+              {viewingScan.scan_type === 'asin_check' && opportunities.length > 0 && (
+                <div className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl p-6 shadow-lg mb-6">
+                  <h2 className="text-xl font-bold mb-4">
+                    Statistics Summary
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="bg-white/20 backdrop-blur rounded-xl p-4">
+                      <p className="text-violet-100 text-sm mb-1">Found Deals</p>
+                      <p className="text-3xl font-bold">{opportunities.length}</p>
+                      <p className="text-sm text-violet-200 mt-1">
+                        {opportunities.filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length} profitable
+                      </p>
+                    </div>
+                    <div className="bg-white/20 backdrop-blur rounded-xl p-4">
+                      <p className="text-violet-100 text-sm mb-1">Potential Profit</p>
+                      <p className="text-3xl font-bold">
+                        £{opportunities
+                          .filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
+                          .reduce((sum: any, opp: any) => sum + (opp.bestOpportunity?.profit || 0), 0)
+                          .toFixed(2)}
+                      </p>
+                      <p className="text-sm text-violet-200 mt-1">Total combined</p>
+                    </div>
+                    <div className="bg-white/20 backdrop-blur rounded-xl p-4">
+                      <p className="text-violet-100 text-sm mb-1">Average ROI</p>
+                      <p className="text-3xl font-bold">
+                        {opportunities.filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length > 0
+                          ? (opportunities
+                              .filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0)
+                              .reduce((sum: any, opp: any) => sum + (opp.bestOpportunity?.roi || 0), 0) / 
+                              opportunities.filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length
+                            ).toFixed(1)
+                          : '0.0'}%
+                      </p>
+                      <p className="text-sm text-violet-200 mt-1">Profitable deals only</p>
+                    </div>
+                    <div className="bg-white/20 backdrop-blur rounded-xl p-4">
+                      <p className="text-violet-100 text-sm mb-1">Exchange Rate</p>
+                      <p className="text-3xl font-bold">€1 = £0.86</p>
+                      <p className="text-sm text-violet-200 mt-1">EUR to GBP</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Loading State */}
               {loadingScanResults ? (
@@ -1318,7 +1466,50 @@ export default function RecentScansPage() {
                                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                                     <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
                                   </svg>
-                                  Share
+                                  <span className="hidden sm:inline">WhatsApp</span>
+                                </button>
+
+                                {/* Telegram Share Button */}
+                                <button
+                                  onClick={async () => {
+                                    const storefrontInfo = formatStorefrontsText(opp.storefronts);
+                                    const message = 
+                                      `🎯 *Luca is the best Deal*\n\n` +
+                                      `🛍️ *${opp.productName}* (${opp.asin})\n` +
+                                      (storefrontInfo ? `🏪 *${storefrontInfo}*\n` : '') +
+                                      `💰 *Profit: £${(opp.bestOpportunity?.profit || 0).toFixed(2)}* (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
+                                      `📍 Buy: Amazon ${opp.bestOpportunity?.marketplace || 'EU'} - £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)}\n` +
+                                      `🇬🇧 Sell: Amazon UK - £${(opp.targetPrice || 0).toFixed(2)}\n\n` +
+                                      `🔗 [${opp.bestOpportunity?.marketplace || 'EU'} Link](https://www.amazon.${getAmazonDomain(opp.bestOpportunity?.marketplace || 'DE')}/dp/${opp.asin}) | [UK Link](https://www.amazon.co.uk/dp/${opp.asin})`;
+                                    
+                                    try {
+                                      const { data: { session } } = await supabase.auth.getSession();
+                                      const response = await fetch('/api/telegram/send-deal', {
+                                        method: 'POST',
+                                        headers: {
+                                          'Content-Type': 'application/json',
+                                          'Authorization': `Bearer ${session?.access_token}`
+                                        },
+                                        body: JSON.stringify({ message })
+                                      });
+                                      
+                                      if (response.ok) {
+                                        alert('Deal sent to Telegram successfully!');
+                                      } else {
+                                        const error = await response.json();
+                                        alert(`Failed to send to Telegram: ${error.details || error.error}`);
+                                      }
+                                    } catch (error) {
+                                      console.error('Error sending to Telegram:', error);
+                                      alert('Failed to send to Telegram');
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors flex items-center gap-1"
+                                >
+                                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.56c-.21 2.27-1.13 7.75-1.6 10.29-.2 1.08-.59 1.44-.97 1.47-.82.07-1.45-.54-2.24-.97-1.24-.78-1.95-1.24-3.16-1.99-1.39-.87-.49-1.34.31-2.12.21-.2 3.85-3.52 3.91-3.82.01-.04.01-.19-.07-.27-.09-.08-.22-.05-.31-.03-.13.03-2.18 1.39-6.16 4.08-.58.4-1.11.59-1.57.58-.52-.01-1.51-.29-2.24-.53-.9-.29-1.62-.45-1.56-.95.03-.26.39-.53 1.07-.8 4.18-1.82 6.97-3.02 8.37-3.6 3.99-1.65 4.81-1.94 5.35-1.95.12 0 .38.03.55.18.14.13.18.3.2.45-.01.06-.01.24-.02.38z"/>
+                                  </svg>
+                                  <span className="hidden sm:inline">Telegram</span>
                                 </button>
 
                                 {/* Blacklist Button */}
@@ -1645,6 +1836,7 @@ export default function RecentScansPage() {
                 <option value="a2a_eu">A2A EU</option>
                 <option value="single_storefront">Single Storefront</option>
                 <option value="all_storefronts">All Storefronts</option>
+                <option value="asin_check">ASIN Checker</option>
               </select>
             </div>
           </div>
@@ -1676,7 +1868,7 @@ export default function RecentScansPage() {
                       <div
                         key={scan.id}
                         className={`bg-white rounded-xl shadow-sm border border-gray-100 p-6 transition-all ${
-                          scan.status === 'completed' && scan.opportunities_found > 0
+                          (scan.status === 'completed' && scan.opportunities_found > 0) || scan.status === 'running'
                             ? 'hover:shadow-md hover:border-indigo-300 cursor-pointer'
                             : ''
                         }`}
@@ -1684,6 +1876,9 @@ export default function RecentScansPage() {
                           if (scan.status === 'completed' && scan.opportunities_found > 0) {
                             console.log('Loading scan:', scan.id, 'with', scan.opportunities_found, 'opportunities')
                             handleLoadScan(scan.id)
+                          } else if (scan.status === 'running') {
+                            console.log('Loading running scan:', scan.id)
+                            handleLoadRunningScan(scan.id)
                           } else {
                             console.log('Scan not clickable:', scan.status, scan.opportunities_found)
                           }
@@ -1713,17 +1908,33 @@ export default function RecentScansPage() {
                                 {scan.completed_at && (
                                   <span>Duration: {formatDuration(scan.started_at, scan.completed_at)}</span>
                                 )}
-                                {scan.total_products > 0 && (
-                                  <span className="flex items-center gap-1">
-                                    <ShoppingBagIcon className="w-4 h-4" />
-                                    {scan.total_products} products
-                                  </span>
-                                )}
-                                {scan.opportunities_found > 0 && (
-                                  <span className="flex items-center gap-1 text-green-600 font-medium">
-                                    <TrophyIcon className="w-4 h-4" />
-                                    {scan.opportunities_found} opportunities
-                                  </span>
+                                {scan.status === 'running' ? (
+                                  <>
+                                    <span className="flex items-center gap-1 text-blue-600 font-medium">
+                                      <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                                      {scan.progress_percentage || 0}% complete
+                                    </span>
+                                    {scan.processed_count > 0 && (
+                                      <span className="text-sm text-gray-600">
+                                        {scan.processed_count} ASINs processed
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    {scan.total_products > 0 && (
+                                      <span className="flex items-center gap-1">
+                                        <ShoppingBagIcon className="w-4 h-4" />
+                                        {scan.total_products} products
+                                      </span>
+                                    )}
+                                    {scan.opportunities_found > 0 && (
+                                      <span className="flex items-center gap-1 text-green-600 font-medium">
+                                        <TrophyIcon className="w-4 h-4" />
+                                        {scan.opportunities_found} opportunities
+                                      </span>
+                                    )}
+                                  </>
                                 )}
                               </div>
                             </div>
@@ -1756,8 +1967,15 @@ export default function RecentScansPage() {
                               )}
                             </button>
                             
-                            {scan.status === 'completed' && scan.opportunities_found > 0 && (
-                              <ChevronRightIcon className="w-5 h-5 text-gray-400" />
+                            {((scan.status === 'completed' && scan.opportunities_found > 0) || scan.status === 'running') && (
+                              <>
+                                {scan.status === 'running' && (
+                                  <span className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 rounded-full mr-2">
+                                    View Live
+                                  </span>
+                                )}
+                                <ChevronRightIcon className="w-5 h-5 text-gray-400" />
+                              </>
                             )}
                           </div>
                         </div>

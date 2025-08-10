@@ -241,7 +241,6 @@ export async function POST(request: NextRequest) {
                 error_message: 'All products blacklisted',
                 completed_at: new Date().toISOString(),
                 metadata: {
-                  ...scan.metadata,
                   excluded_asins: excludedCount,
                   blacklisted_asins_count: blacklistedAsins.size
                 }
@@ -944,7 +943,6 @@ export async function POST(request: NextRequest) {
               opportunities_found: opportunitiesFound,
               completed_at: new Date().toISOString(),
               metadata: {
-                ...scan.metadata,
                 excluded_asins: excludedCount,
                 blacklisted_asins_count: blacklistedAsins.size,
                 original_product_count: products.length

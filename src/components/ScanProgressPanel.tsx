@@ -8,16 +8,11 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   ClockIcon,
-  SparklesIcon,
-  ChartBarIcon,
   CpuChipIcon,
   PlusIcon,
   MinusIcon,
-  ExclamationTriangleIcon,
-  ChevronUpIcon,
-  ChevronDownIcon,
-  MinusSmallIcon,
-  PlusSmallIcon
+  ChevronLeftIcon,
+  ChevronRightIcon
 } from '@heroicons/react/24/outline'
 
 interface ScanProgress {
@@ -49,8 +44,8 @@ interface ScanProgress {
 
 export default function ScanProgressPanel() {
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null)
-  const [isExpanded, setIsExpanded] = useState(true)
-  const [isMinimized, setIsMinimized] = useState(false)
+  const [isCollapsed, setIsCollapsed] = useState(false)
+  const [hasAutoOpened, setHasAutoOpened] = useState(false)
   const [elapsedTime, setElapsedTime] = useState(0)
 
   useEffect(() => {
@@ -62,7 +57,6 @@ export default function ScanProgressPanel() {
         const { data: { session } } = await supabase.auth.getSession()
         if (!session?.access_token) return
 
-        // Try multiple endpoints to get progress
         const endpoints = [
           '/api/storefronts/update-sequential',
           '/api/batch-status'
@@ -78,7 +72,6 @@ export default function ScanProgressPanel() {
           if (response.ok) {
             const data = await response.json()
             
-            // Transform data to our format
             const progress: ScanProgress = {
               isProcessing: data.isProcessing || data.batch?.isProcessing || false,
               totalStorefronts: data.totalStorefronts || data.batch?.totalStorefronts || 0,
@@ -98,9 +91,17 @@ export default function ScanProgressPanel() {
 
             setScanProgress(progress)
             
-            // Auto-expand when processing starts
-            if (progress.isProcessing && !isExpanded) {
-              setIsExpanded(true)
+            // Auto-show panel when scan starts
+            if (progress.isProcessing && !hasAutoOpened) {
+              setIsCollapsed(false)
+              setHasAutoOpened(true)
+            }
+            
+            // Reset auto-open flag when scan completes
+            if (!progress.isProcessing && hasAutoOpened) {
+              setTimeout(() => {
+                setHasAutoOpened(false)
+              }, 5000)
             }
             
             break
@@ -111,14 +112,11 @@ export default function ScanProgressPanel() {
       }
     }
 
-    // Initial fetch
     fetchProgress()
 
-    // Poll frequently when processing
     if (scanProgress?.isProcessing) {
       pollInterval = setInterval(fetchProgress, 2000)
       
-      // Update elapsed time
       if (scanProgress.startTime) {
         timeInterval = setInterval(() => {
           const start = new Date(scanProgress.startTime).getTime()
@@ -134,8 +132,9 @@ export default function ScanProgressPanel() {
       if (pollInterval) clearInterval(pollInterval)
       if (timeInterval) clearInterval(timeInterval)
     }
-  }, [scanProgress?.isProcessing])
+  }, [scanProgress?.isProcessing, hasAutoOpened])
 
+  // Don't render if no scan data
   if (!scanProgress || (!scanProgress.isProcessing && scanProgress.processedStorefronts === 0)) {
     return null
   }
@@ -150,7 +149,7 @@ export default function ScanProgressPanel() {
     const secs = seconds % 60
     
     if (hours > 0) {
-      return `${hours}h ${minutes}m ${secs}s`
+      return `${hours}h ${minutes}m`
     } else if (minutes > 0) {
       return `${minutes}m ${secs}s`
     }
@@ -159,7 +158,6 @@ export default function ScanProgressPanel() {
 
   const estimateRemainingTime = () => {
     if (scanProgress.processedStorefronts === 0) return null
-    
     const avgTimePerStore = elapsedTime / scanProgress.processedStorefronts
     const remaining = scanProgress.totalStorefronts - scanProgress.processedStorefronts
     return Math.floor(avgTimePerStore * remaining)
@@ -167,281 +165,152 @@ export default function ScanProgressPanel() {
 
   const totalProductsAdded = scanProgress.completedStorefronts.reduce((sum, s) => sum + s.productsAdded, 0)
   const totalProductsRemoved = scanProgress.completedStorefronts.reduce((sum, s) => sum + s.productsRemoved, 0)
-  const successfulScans = scanProgress.completedStorefronts.filter(s => s.success).length
-  const failedScans = scanProgress.completedStorefronts.filter(s => !s.success).length
-
-  // Minimized view
-  if (isMinimized) {
-    return (
-      <div className="fixed top-4 left-1/2 transform -translate-x-1/2 w-[90%] max-w-2xl bg-white rounded-lg shadow-lg border border-gray-200 z-50">
-        <div className="px-4 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-lg">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 flex-1">
-              <BuildingStorefrontIcon className="w-5 h-5 text-white flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-4">
-                  <span className="text-sm font-semibold text-white truncate">
-                    Syncing: {scanProgress.processedStorefronts}/{scanProgress.totalStorefronts} storefronts
-                  </span>
-                  <span className="text-sm font-bold text-white">
-                    {Math.round(progressPercentage)}%
-                  </span>
-                </div>
-                <div className="mt-1">
-                  <div className="w-full bg-white/20 rounded-full h-2">
-                    <div 
-                      className="bg-white h-2 rounded-full transition-all duration-500"
-                      style={{ width: `${progressPercentage}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-              {scanProgress.currentStorefront && (
-                <div className="flex items-center gap-2 text-white/90 text-sm">
-                  <ArrowPathIcon className="w-4 h-4 animate-spin" />
-                  <span className="truncate max-w-[200px]">{scanProgress.currentStorefront}</span>
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => setIsMinimized(false)}
-              className="ml-3 p-1.5 hover:bg-white/20 rounded transition-colors flex-shrink-0"
-              title="Expand panel"
-            >
-              <PlusSmallIcon className="w-5 h-5 text-white" />
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
 
   return (
-    <div className="fixed top-20 left-1/2 transform -translate-x-1/2 w-[90%] max-w-4xl bg-white rounded-2xl shadow-2xl border border-gray-200 z-50">
-      {/* Header */}
-      <div className="px-6 py-4 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-t-2xl">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
-              <BuildingStorefrontIcon className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-white">
+    <div className={`fixed right-0 top-24 z-40 transition-transform duration-300 ease-in-out ${
+      isCollapsed ? 'translate-x-[calc(100%-3rem)]' : 'translate-x-0'
+    }`}>
+      {/* Toggle Button */}
+      <button
+        onClick={() => setIsCollapsed(!isCollapsed)}
+        className="absolute left-0 top-8 -translate-x-full bg-gradient-to-r from-purple-600 to-blue-600 text-white p-2.5 rounded-l-lg shadow-lg hover:shadow-xl transition-all"
+        aria-label={isCollapsed ? 'Show scan progress' : 'Hide scan progress'}
+      >
+        {isCollapsed ? (
+          <ChevronLeftIcon className="h-5 w-5" />
+        ) : (
+          <ChevronRightIcon className="h-5 w-5" />
+        )}
+      </button>
+
+      {/* Main Panel */}
+      <div className="bg-white rounded-l-xl shadow-2xl w-80 max-h-[calc(100vh-8rem)] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center space-x-2">
+              <BuildingStorefrontIcon className="h-5 w-5" />
+              <h3 className="text-sm font-semibold">
                 Storefront Sync in Progress
-              </h2>
-              <p className="text-indigo-100 text-sm">
-                Processing {scanProgress.totalStorefronts} storefronts with live updates
-              </p>
+              </h3>
             </div>
+            <div className="text-lg font-bold">{Math.round(progressPercentage)}%</div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setIsMinimized(true)}
-              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-              title="Minimize panel"
-            >
-              <MinusSmallIcon className="w-5 h-5 text-white" />
-            </button>
-            <button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-              title={isExpanded ? "Collapse details" : "Expand details"}
-            >
-              <svg className={`w-5 h-5 text-white transform transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
+          
+          <p className="text-xs text-white/80 mb-2">
+            Processing {scanProgress.totalStorefronts} storefronts
+          </p>
+
+          {/* Progress Bar */}
+          <div className="w-full bg-white/20 rounded-full h-2">
+            <div 
+              className="bg-white h-2 rounded-full transition-all duration-500"
+              style={{ width: `${progressPercentage}%` }}
+            />
+          </div>
+
+          <div className="flex justify-between text-xs text-white/80 mt-1">
+            <span>{scanProgress.processedStorefronts} of {scanProgress.totalStorefronts}</span>
+            {(() => {
+              const remaining = estimateRemainingTime()
+              return remaining ? <span>~{formatTime(remaining)} remaining</span> : null
+            })()}
           </div>
         </div>
 
-        {/* Main Progress Bar */}
-        <div className="mt-4">
-          <div className="flex justify-between text-sm text-white/90 mb-2">
-            <span className="font-medium">
-              {scanProgress.processedStorefronts} of {scanProgress.totalStorefronts} storefronts
-            </span>
-            <span className="font-bold">{Math.round(progressPercentage)}%</span>
-          </div>
-          <div className="w-full bg-white/20 rounded-full h-3 backdrop-blur-sm">
-            <div 
-              className="bg-white h-3 rounded-full transition-all duration-500 relative overflow-hidden"
-              style={{ width: `${progressPercentage}%` }}
-            >
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
+        {/* Current Processing */}
+        {scanProgress.isProcessing && scanProgress.currentStorefront && (
+          <div className="px-4 py-3 bg-blue-50 border-b border-gray-200">
+            <div className="flex items-center space-x-2 mb-1">
+              <ArrowPathIcon className="h-4 w-4 text-blue-600 animate-spin" />
+              <span className="text-xs text-gray-600">Currently scanning</span>
             </div>
+            <p className="text-sm font-medium text-gray-900 truncate">
+              {scanProgress.currentStorefront}
+            </p>
+          </div>
+        )}
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 gap-2 p-3 bg-gray-50">
+          <div className="bg-white rounded-lg p-2 border border-gray-200">
+            <div className="flex items-center space-x-1 mb-1">
+              <ClockIcon className="h-3.5 w-3.5 text-gray-400" />
+              <span className="text-xs text-gray-600">Time</span>
+            </div>
+            <p className="text-sm font-bold text-gray-900">{formatTime(elapsedTime)}</p>
+          </div>
+
+          <div className="bg-white rounded-lg p-2 border border-gray-200">
+            <div className="flex items-center space-x-1 mb-1">
+              <CpuChipIcon className="h-3.5 w-3.5 text-gray-400" />
+              <span className="text-xs text-gray-600">Webscraping</span>
+            </div>
+            <p className="text-sm font-bold text-gray-900">{scanProgress.tokensAvailable}</p>
+            <p className="text-xs text-gray-500">{scanProgress.tokensUsed} used</p>
+          </div>
+
+          <div className="bg-white rounded-lg p-2 border border-gray-200">
+            <div className="flex items-center space-x-1 mb-1">
+              <PlusIcon className="h-3.5 w-3.5 text-green-500" />
+              <span className="text-xs text-gray-600">Added</span>
+            </div>
+            <p className="text-sm font-bold text-green-600">+{totalProductsAdded}</p>
+          </div>
+
+          <div className="bg-white rounded-lg p-2 border border-gray-200">
+            <div className="flex items-center space-x-1 mb-1">
+              <MinusIcon className="h-3.5 w-3.5 text-red-500" />
+              <span className="text-xs text-gray-600">Removed</span>
+            </div>
+            <p className="text-sm font-bold text-red-600">-{totalProductsRemoved}</p>
+          </div>
+        </div>
+
+        {/* Recent Updates */}
+        <div className="flex-1 overflow-y-auto px-3 py-2">
+          <h4 className="text-xs font-semibold text-gray-700 mb-2">Recent Updates</h4>
+          <div className="space-y-1">
+            {scanProgress.completedStorefronts.slice(-5).reverse().map((store, index) => (
+              <div key={index} className="flex items-center justify-between py-1.5 px-2 bg-gray-50 rounded-lg">
+                <div className="flex items-center space-x-2 min-w-0">
+                  {store.success ? (
+                    <CheckCircleIcon className="h-4 w-4 text-green-500 flex-shrink-0" />
+                  ) : (
+                    <XCircleIcon className="h-4 w-4 text-red-500 flex-shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-gray-900 truncate">{store.name}</p>
+                    <p className="text-xs text-gray-500">
+                      {new Date(store.timestamp).toLocaleTimeString()}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-1 text-xs flex-shrink-0">
+                  <span className="font-medium text-green-600">+{store.productsAdded}</span>
+                  <span className="text-gray-400">/</span>
+                  <span className="font-medium text-red-600">-{store.productsRemoved}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Footer Summary */}
+        <div className="px-4 py-2 bg-gray-100 border-t border-gray-200">
+          <div className="flex items-center justify-between">
+            <div className="text-xs">
+              <span className="text-gray-600">Status: </span>
+              <span className="font-semibold text-gray-900">
+                {scanProgress.completedStorefronts.filter(s => s.success).length} Successful
+              </span>
+            </div>
+            {!scanProgress.isProcessing && (
+              <span className="text-xs font-semibold text-green-600">Complete</span>
+            )}
           </div>
         </div>
       </div>
-
-      {isExpanded && (
-        <>
-          {/* Current Processing */}
-          {scanProgress.isProcessing && scanProgress.currentStorefront && (
-            <div className="px-6 py-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-100">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <ArrowPathIcon className="w-6 h-6 text-indigo-600 animate-spin" />
-                  <div>
-                    <p className="text-sm text-gray-600">Currently scanning</p>
-                    <p className="text-lg font-bold text-gray-900">
-                      {scanProgress.currentStorefront}
-                    </p>
-                    {scanProgress.currentStorefrontNumber && (
-                      <p className="text-xs text-gray-500">
-                        Storefront {scanProgress.currentStorefrontNumber} of {scanProgress.totalStorefronts}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                {scanProgress.productsFound !== undefined && (
-                  <div className="text-right">
-                    <p className="text-2xl font-bold text-indigo-600">{scanProgress.productsFound}</p>
-                    <p className="text-sm text-gray-600">products found</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Statistics Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-6 bg-gray-50">
-            {/* Time Stats */}
-            <div className="bg-white rounded-xl p-4 border border-gray-200">
-              <div className="flex items-center gap-2 mb-2">
-                <ClockIcon className="w-5 h-5 text-gray-400" />
-                <span className="text-sm text-gray-600">Time Elapsed</span>
-              </div>
-              <p className="text-xl font-bold text-gray-900">{formatTime(elapsedTime)}</p>
-              {(() => {
-                const remaining = estimateRemainingTime()
-                return remaining ? (
-                  <p className="text-xs text-gray-500 mt-1">
-                    ~{formatTime(remaining)} remaining
-                  </p>
-                ) : null
-              })()}
-            </div>
-
-            {/* Token Stats */}
-            <div className="bg-white rounded-xl p-4 border border-gray-200">
-              <div className="flex items-center gap-2 mb-2">
-                <CpuChipIcon className="w-5 h-5 text-gray-400" />
-                <span className="text-sm text-gray-600">Keepa Tokens</span>
-              </div>
-              <p className="text-xl font-bold text-gray-900">{scanProgress.tokensAvailable}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                {scanProgress.tokensUsed} used
-              </p>
-            </div>
-
-            {/* Products Added */}
-            <div className="bg-white rounded-xl p-4 border border-gray-200">
-              <div className="flex items-center gap-2 mb-2">
-                <PlusIcon className="w-5 h-5 text-green-500" />
-                <span className="text-sm text-gray-600">New Products</span>
-              </div>
-              <p className="text-xl font-bold text-green-600">+{totalProductsAdded}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                added to catalog
-              </p>
-            </div>
-
-            {/* Products Removed */}
-            <div className="bg-white rounded-xl p-4 border border-gray-200">
-              <div className="flex items-center gap-2 mb-2">
-                <MinusIcon className="w-5 h-5 text-red-500" />
-                <span className="text-sm text-gray-600">Removed</span>
-              </div>
-              <p className="text-xl font-bold text-red-600">-{totalProductsRemoved}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                outdated products
-              </p>
-            </div>
-          </div>
-
-          {/* Recent Completions */}
-          <div className="px-6 py-4 border-t border-gray-100">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">Recent Updates</h3>
-            <div className="space-y-2 max-h-32 overflow-y-auto">
-              {scanProgress.completedStorefronts.slice(-5).reverse().map((store, index) => (
-                <div key={index} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    {store.success ? (
-                      <CheckCircleIcon className="w-5 h-5 text-green-500" />
-                    ) : (
-                      <XCircleIcon className="w-5 h-5 text-red-500" />
-                    )}
-                    <div>
-                      <p className="font-medium text-gray-900">{store.name}</p>
-                      <p className="text-xs text-gray-500">
-                        {new Date(store.timestamp).toLocaleTimeString()}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm font-medium text-green-600">+{store.productsAdded}</span>
-                    <span className="text-gray-400 mx-1">/</span>
-                    <span className="text-sm font-medium text-red-600">-{store.productsRemoved}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Footer Summary */}
-          <div className="px-6 py-4 bg-gray-100 rounded-b-2xl">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-6">
-                <div className="flex items-center gap-2">
-                  <CheckCircleIcon className="w-5 h-5 text-green-500" />
-                  <span className="text-sm font-medium text-gray-700">
-                    {successfulScans} Successful
-                  </span>
-                </div>
-                {failedScans > 0 && (
-                  <div className="flex items-center gap-2">
-                    <ExclamationTriangleIcon className="w-5 h-5 text-amber-500" />
-                    <span className="text-sm font-medium text-gray-700">
-                      {failedScans} Failed
-                    </span>
-                  </div>
-                )}
-                {scanProgress.enrichmentQueue && scanProgress.enrichmentQueue.pending > 0 && (
-                  <div className="flex items-center gap-2">
-                    <SparklesIcon className="w-5 h-5 text-purple-500" />
-                    <span className="text-sm font-medium text-gray-700">
-                      {scanProgress.enrichmentQueue.pending} titles queued
-                    </span>
-                  </div>
-                )}
-              </div>
-              {!scanProgress.isProcessing && (
-                <button
-                  onClick={() => setScanProgress(null)}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
-                >
-                  Close
-                </button>
-              )}
-            </div>
-          </div>
-        </>
-      )}
     </div>
   )
 }
-
-<style jsx>{`
-  @keyframes shimmer {
-    0% {
-      transform: translateX(-100%);
-    }
-    100% {
-      transform: translateX(100%);
-    }
-  }
-  
-  .animate-shimmer {
-    animation: shimmer 2s infinite;
-  }
-`}</style>

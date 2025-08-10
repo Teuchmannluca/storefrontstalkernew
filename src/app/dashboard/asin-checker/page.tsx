@@ -96,13 +96,25 @@ export default function ASINCheckerPage() {
   const [currentListId, setCurrentListId] = useState<string | null>(null)
   const [currentListName, setCurrentListName] = useState<string | null>(null)
   const [availableLists, setAvailableLists] = useState<any[]>([])
+  const [runningScan, setRunningScan] = useState<any>(null)
+  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null)
   const router = useRouter()
 
   useEffect(() => {
     checkAuth()
     fetchAvailableLists()
+    checkForRunningScan()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    // Cleanup polling on unmount
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval)
+      }
+    }
+  }, [pollingInterval])
 
   const checkAuth = async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -136,6 +148,103 @@ export default function ASINCheckerPage() {
     } catch (error) {
       console.error('Error fetching lists:', error)
     }
+  }
+
+  // Check for running ASIN checker scans
+  const checkForRunningScan = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Query for running ASIN checker scans
+      const { data: runningScans, error } = await supabase
+        .from('arbitrage_scans')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('scan_type', 'asin_check')
+        .eq('status', 'running')
+        .order('started_at', { ascending: false })
+        .limit(1)
+
+      if (!error && runningScans && runningScans.length > 0) {
+        setRunningScan(runningScans[0])
+      }
+    } catch (error) {
+      console.error('Error checking for running scan:', error)
+    }
+  }
+
+  // Reconnect to a running scan
+  const reconnectToScan = async (scanId: string) => {
+    setAnalyzing(true)
+    setOpportunities([])
+    setLastScanId(scanId)
+    
+    // Start polling for scan progress
+    const interval = setInterval(async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) {
+          clearInterval(interval)
+          return
+        }
+
+        const response = await fetch(`/api/arbitrage/scan-progress/${scanId}`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`
+          }
+        })
+
+        if (!response.ok) {
+          clearInterval(interval)
+          setAnalyzing(false)
+          return
+        }
+
+        const data = await response.json()
+        const { scan, opportunities: fetchedOpportunities, estimatedTimeRemaining } = data
+
+        // Update analysis stats
+        setAnalysisStats({
+          totalOpportunities: scan.opportunities_found || 0,
+          productsAnalyzed: scan.processed_count || 0,
+          exchangeRate: EUR_TO_GBP_RATE,
+          progressMessage: scan.current_step || 'Processing...',
+          progress: scan.progress_percentage || 0,
+          totalAsins: scan.unique_asins || scan.total_products,
+          estimatedMinutesRemaining: estimatedTimeRemaining ? Math.ceil(estimatedTimeRemaining / 60) : undefined
+        })
+
+        // Update opportunities
+        if (fetchedOpportunities && fetchedOpportunities.length > 0) {
+          setOpportunities(fetchedOpportunities)
+        }
+
+        // Check if scan is complete
+        if (scan.status === 'completed' || scan.status === 'failed') {
+          clearInterval(interval)
+          setPollingInterval(null)
+          setAnalyzing(false)
+          setRunningScan(null)
+          
+          if (scan.status === 'failed') {
+            alert(`Scan failed: ${scan.error_message || 'Unknown error'}`)
+          }
+        }
+      } catch (error) {
+        console.error('Error polling scan progress:', error)
+      }
+    }, 5000) // Poll every 5 seconds
+
+    setPollingInterval(interval)
+    
+    // Scroll to analysis section
+    setTimeout(() => {
+      analysisRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
   }
 
   // Validate ASIN format
@@ -288,7 +397,7 @@ export default function ASINCheckerPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('No session found')
       
-      const response = await fetch('/api/arbitrage/analyze-asins', {
+      const response = await fetch('/api/arbitrage/analyze-asins-optimized', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -460,6 +569,33 @@ export default function ASINCheckerPage() {
             <h1 className="text-3xl font-bold text-gray-900 mb-2">ASIN Checker</h1>
             <p className="text-gray-600">Check specific ASINs for Amazon UK to EU arbitrage opportunities</p>
           </div>
+
+          {/* Running Scan Notification */}
+          {runningScan && !analyzing && (
+            <div className="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <ArrowPathIcon className="w-5 h-5 animate-spin text-blue-600" />
+                  <div>
+                    <p className="font-medium text-blue-900">
+                      You have a scan running in the background
+                    </p>
+                    <p className="text-sm text-blue-700">
+                      Started {new Date(runningScan.started_at).toLocaleTimeString()} • 
+                      {runningScan.progress_percentage || 0}% complete • 
+                      {runningScan.processed_count || 0} ASINs processed
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => reconnectToScan(runningScan.id)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                >
+                  View Progress
+                </button>
+              </div>
+            </div>
+          )}
 
 
           {/* ASIN Lists Manager */}
@@ -922,30 +1058,78 @@ export default function ASINCheckerPage() {
                           </div>
                         </div>
                         
-                        {/* WhatsApp Share Button */}
-                        <button
-                          onClick={() => {
-                            const message = encodeURIComponent(
-                              `🎯 *ASIN Check Result*\n\n` +
-                              `📦 *Product:* ${opp.productName}\n` +
-                              `🔗 *ASIN:* ${opp.asin}\n\n` +
-                              `💰 *Profit:* £${(opp.bestOpportunity?.profit || 0).toFixed(2)} (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
-                              `🛒 *Buy from:* ${getCountryFlag(opp.bestOpportunity?.marketplace || 'EU')} Amazon ${opp.bestOpportunity?.marketplace || 'EU'}\n` +
-                              `💵 *Buy Price:* £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)} (€${(opp.bestOpportunity?.sourcePrice || 0).toFixed(2)})\n` +
-                              `🔗 ${`https://www.amazon.${getAmazonDomain(opp.bestOpportunity?.marketplace || 'DE')}/dp/${opp.asin}`}\n\n` +
-                              `🇬🇧 *Sell in UK:* £${(opp.targetPrice || 0).toFixed(2)}\n` +
-                              `🔗 ${`https://www.amazon.co.uk/dp/${opp.asin}`}\n\n` +
-                              `📸 *Product Image:* ${opp.productImage || 'No image available'}`
-                            );
-                            window.open(`https://wa.me/?text=${message}`, '_blank');
-                          }}
-                          className="mt-3 px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1 ml-auto"
-                        >
-                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
-                          </svg>
-                          Share
-                        </button>
+                        {/* Share Buttons Container */}
+                        <div className="mt-3 flex items-center gap-2 ml-auto">
+                          {/* WhatsApp Share Button */}
+                          <button
+                            onClick={() => {
+                              const message = encodeURIComponent(
+                                `🎯 *ASIN Check Result*\n\n` +
+                                `📦 *Product:* ${opp.productName}\n` +
+                                `🔗 *ASIN:* ${opp.asin}\n\n` +
+                                `💰 *Profit:* £${(opp.bestOpportunity?.profit || 0).toFixed(2)} (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
+                                `🛒 *Buy from:* ${getCountryFlag(opp.bestOpportunity?.marketplace || 'EU')} Amazon ${opp.bestOpportunity?.marketplace || 'EU'}\n` +
+                                `💵 *Buy Price:* £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)} (€${(opp.bestOpportunity?.sourcePrice || 0).toFixed(2)})\n` +
+                                `🔗 ${`https://www.amazon.${getAmazonDomain(opp.bestOpportunity?.marketplace || 'DE')}/dp/${opp.asin}`}\n\n` +
+                                `🇬🇧 *Sell in UK:* £${(opp.targetPrice || 0).toFixed(2)}\n` +
+                                `🔗 ${`https://www.amazon.co.uk/dp/${opp.asin}`}\n\n` +
+                                `📸 *Product Image:* ${opp.productImage || 'No image available'}`
+                              );
+                              window.open(`https://wa.me/?text=${message}`, '_blank');
+                            }}
+                            className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1"
+                          >
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+                            </svg>
+                            WhatsApp
+                          </button>
+
+                          {/* Telegram Share Button */}
+                          <button
+                            onClick={async () => {
+                              const message = 
+                                `🎯 *ASIN Check Result*\n\n` +
+                                `📦 *Product:* ${opp.productName}\n` +
+                                `🔗 *ASIN:* ${opp.asin}\n\n` +
+                                `💰 *Profit:* £${(opp.bestOpportunity?.profit || 0).toFixed(2)} (${(opp.bestOpportunity?.roi || 0).toFixed(1)}% ROI)\n\n` +
+                                `🛒 *Buy from:* ${getCountryFlag(opp.bestOpportunity?.marketplace || 'EU')} Amazon ${opp.bestOpportunity?.marketplace || 'EU'}\n` +
+                                `💵 *Buy Price:* £${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)} (€${(opp.bestOpportunity?.sourcePrice || 0).toFixed(2)})\n` +
+                                `🔗 [Buy Link](https://www.amazon.${getAmazonDomain(opp.bestOpportunity?.marketplace || 'DE')}/dp/${opp.asin})\n\n` +
+                                `🇬🇧 *Sell in UK:* £${(opp.targetPrice || 0).toFixed(2)}\n` +
+                                `🔗 [UK Link](https://www.amazon.co.uk/dp/${opp.asin})\n\n` +
+                                `📸 [Product Image](${opp.productImage || 'No image available'})`;
+                              
+                              try {
+                                const { data: { session } } = await supabase.auth.getSession();
+                                const response = await fetch('/api/telegram/send-deal', {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${session?.access_token}`
+                                  },
+                                  body: JSON.stringify({ message })
+                                });
+                                
+                                if (response.ok) {
+                                  alert('Deal sent to Telegram successfully!');
+                                } else {
+                                  const error = await response.json();
+                                  alert(`Failed to send to Telegram: ${error.details || error.error}`);
+                                }
+                              } catch (error) {
+                                console.error('Error sending to Telegram:', error);
+                                alert('Failed to send to Telegram');
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors flex items-center gap-1"
+                          >
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.56c-.21 2.27-1.13 7.75-1.6 10.29-.2 1.08-.59 1.44-.97 1.47-.82.07-1.45-.54-2.24-.97-1.24-.78-1.95-1.24-3.16-1.99-1.39-.87-.49-1.34.31-2.12.21-.2 3.85-3.52 3.91-3.82.01-.04.01-.19-.07-.27-.09-.08-.22-.05-.31-.03-.13.03-2.18 1.39-6.16 4.08-.58.4-1.11.59-1.57.58-.52-.01-1.51-.29-2.24-.53-.9-.29-1.62-.45-1.56-.95.03-.26.39-.53 1.07-.8 4.18-1.82 6.97-3.02 8.37-3.6 3.99-1.65 4.81-1.94 5.35-1.95.12 0 .38.03.55.18.14.13.18.3.2.45-.01.06-.01.24-.02.38z"/>
+                            </svg>
+                            Telegram
+                          </button>
+                        </div>
                       </div>
                     </div>
 

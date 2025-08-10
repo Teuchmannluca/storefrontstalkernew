@@ -202,10 +202,6 @@ export default function StorefrontsPage() {
       if (response.ok) {
         console.log('✅ Sequential update started:', result)
         
-        // Show confirmation message
-        const estimatedTime = storefronts.length * 3 // 3 minutes per storefront
-        alert(`Sequential update started!\n\nProcessing ${storefronts.length} storefronts\nEstimated time: ${estimatedTime} minutes\n\nEach storefront will be scanned with a 3-minute interval.`)
-        
         // Poll for progress updates
         const pollInterval = setInterval(async () => {
           try {
@@ -222,9 +218,7 @@ export default function StorefrontsPage() {
               if (status.isProcessing) {
                 const message = status.currentStorefront 
                   ? `Processing: ${status.currentStorefront} (${status.processedStorefronts}/${status.totalStorefronts})`
-                  : status.nextStorefrontTime
-                    ? `Waiting until ${new Date(status.nextStorefrontTime).toLocaleTimeString()} for next storefront...`
-                    : `Processed ${status.processedStorefronts}/${status.totalStorefronts} storefronts`
+                  : `Processed ${status.processedStorefronts}/${status.totalStorefronts} storefronts`
                 
                 updateSyncOperation(operationId, {
                   message,

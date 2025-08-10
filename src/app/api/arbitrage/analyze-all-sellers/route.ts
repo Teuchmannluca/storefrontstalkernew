@@ -83,6 +83,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+
   // Create streaming response
   const stream = new ReadableStream({
     async start(controller) {
@@ -242,7 +243,6 @@ export async function POST(request: NextRequest) {
                 error_message: 'All ASINs blacklisted',
                 completed_at: new Date().toISOString(),
                 metadata: {
-                  ...scan.metadata,
                   excluded_asins: excludedCount,
                   blacklisted_asins_count: blacklistedAsins.size,
                   original_unique_asins: uniqueProducts.length
@@ -607,7 +607,6 @@ export async function POST(request: NextRequest) {
               opportunities_found: opportunitiesFound,
               completed_at: new Date().toISOString(),
               metadata: {
-                ...scan.metadata,
                 excluded_asins: excludedCount,
                 blacklisted_asins_count: blacklistedAsins.size,
                 original_unique_asins: uniqueProducts.length
