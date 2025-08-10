@@ -727,7 +727,7 @@ export default function RecentScansPage() {
                       </span>
                       <span className="flex items-center gap-1">
                         <TrophyIcon className="w-4 h-4" />
-                        {viewingScan.opportunities_found || 0} opportunities
+                        {opportunities.length > 0 ? opportunities.length : (viewingScan.opportunities_found || 0)} opportunities
                       </span>
                     </div>
                     

@@ -46,7 +46,7 @@ export async function GET(
       );
     }
 
-    // Fetch opportunities found so far (limited to last 100 to avoid huge payloads)
+    // Fetch all opportunities found so far
     const { data: opportunities, error: oppsError } = await supabase
       .from('arbitrage_opportunities')
       .select(`
@@ -69,8 +69,7 @@ export async function GET(
         all_marketplace_prices
       `)
       .eq('scan_id', scanId)
-      .order('best_roi', { ascending: false })
-      .limit(100);
+      .order('best_roi', { ascending: false });
 
     if (oppsError) {
       console.error('Error fetching opportunities:', oppsError);
