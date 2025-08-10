@@ -311,20 +311,44 @@ export default function RecentScansPage() {
       console.log('Found scan:', scan)
       setViewingScan(scan)
       
-      // Fetch opportunities for this scan
+      // Fetch ALL opportunities for this scan (Supabase defaults to 1000 limit)
       console.log('Fetching opportunities for scan_id:', scanId)
-      const { data: opportunities, error: oppsError } = await supabase
+      
+      // First get the count to see if we need pagination
+      const { count } = await supabase
         .from('arbitrage_opportunities')
-        .select('*')
+        .select('*', { count: 'exact', head: true })
         .eq('scan_id', scanId)
-        .order('best_roi', { ascending: false })
       
-      console.log('Opportunities data:', opportunities)
-      console.log('Opportunities error:', oppsError)
+      console.log('Total opportunities in scan:', count)
       
-      if (oppsError) {
-        throw new Error('Failed to load opportunities')
+      // Fetch all opportunities (Supabase has a max of 1000 per request)
+      let allOpportunities: any[] = []
+      const pageSize = 1000
+      const totalPages = Math.ceil((count || 0) / pageSize)
+      
+      for (let page = 0; page < totalPages; page++) {
+        const { data: pageData, error: pageError } = await supabase
+          .from('arbitrage_opportunities')
+          .select('*')
+          .eq('scan_id', scanId)
+          .order('best_roi', { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1)
+        
+        if (pageError) {
+          console.error('Error fetching page', page, pageError)
+          throw new Error('Failed to load opportunities')
+        }
+        
+        if (pageData) {
+          allOpportunities = [...allOpportunities, ...pageData]
+        }
       }
+      
+      const opportunities = allOpportunities
+      console.log('Fetched opportunities:', opportunities.length)
+      
+      console.log('Final opportunities data:', opportunities)
       
       // Transform the opportunities to match the expected format
       const transformedOpportunities: ArbitrageOpportunity[] = opportunities.map((opp: any) => ({
