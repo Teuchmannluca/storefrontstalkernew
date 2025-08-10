@@ -440,11 +440,16 @@ export async function POST(request: NextRequest) {
                 const catalogData = await catalogClient.getCatalogItem(
                   asin,
                   [MARKETPLACES.UK.id],
-                  ['attributes', 'images', 'salesRanks']
+                  ['attributes', 'images', 'salesRanks', 'summaries']
                 );
                 
-                if (catalogData?.attributes?.title) {
-                  productName = catalogData.attributes.title[0]?.value || asin;
+                // Try multiple sources for the product title
+                if (catalogData?.attributes?.title?.[0]?.value) {
+                  productName = catalogData.attributes.title[0].value;
+                } else if (catalogData?.summaries?.[0]?.itemName) {
+                  productName = catalogData.summaries[0].itemName;
+                } else if (catalogData?.attributes?.item_name?.[0]?.value) {
+                  productName = catalogData.attributes.item_name[0].value;
                 }
                 if (catalogData?.images?.[0]?.images?.[0]?.link) {
                   productImage = catalogData.images[0].images[0].link;

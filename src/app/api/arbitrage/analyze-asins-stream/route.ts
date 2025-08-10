@@ -345,11 +345,25 @@ export async function POST(request: NextRequest) {
                     const catalogData = await catalogClient.getCatalogItem(
                       asin,
                       [MARKETPLACES.UK.id],
-                      ['attributes', 'images', 'salesRanks']
+                      ['attributes', 'images', 'salesRanks', 'summaries']
                     );
                     
+                    // Try multiple sources for the product title
                     if (catalogData?.attributes?.title?.[0]?.value) {
                       productName = catalogData.attributes.title[0].value;
+                    } else if (catalogData?.summaries?.[0]?.itemName) {
+                      productName = catalogData.summaries[0].itemName;
+                    } else if (catalogData?.attributes?.item_name?.[0]?.value) {
+                      productName = catalogData.attributes.item_name[0].value;
+                    }
+                    
+                    // Log if we couldn't find a title
+                    if (productName === asin) {
+                      console.log(`No title found for ASIN ${asin}, using ASIN as name. Available data:`, {
+                        hasAttributes: !!catalogData?.attributes,
+                        hasSummaries: !!catalogData?.summaries,
+                        attributeKeys: catalogData?.attributes ? Object.keys(catalogData.attributes) : []
+                      });
                     }
                     if (catalogData?.images?.[0]?.images?.[0]?.link) {
                       productImage = catalogData.images[0].images[0].link;
