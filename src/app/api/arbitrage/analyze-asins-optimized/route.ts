@@ -246,13 +246,15 @@ export async function POST(request: NextRequest) {
           const batchSize = RATE_LIMITS.COMPETITIVE_PRICING.itemsPerRequest;
           const ukPricingData = new Map<string, any>();
           
-          const ukPricingStep = `Fetching UK pricing for ${finalAsins.length} ASINs...`;
+          const ukPricingStep = `Starting UK pricing for ${finalAsins.length} ASINs (${ukBatches.length} batches)...`;
           sendMessage({ 
             type: 'progress', 
             data: { 
               step: ukPricingStep, 
               progress: 10,
-              scanId 
+              scanId,
+              totalAsins: finalAsins.length,
+              processedCount: 0
             } 
           });
           await updateScanProgress(10, ukPricingStep, 0);
@@ -307,16 +309,19 @@ export async function POST(request: NextRequest) {
               }
               
               const batchProgress = 10 + (batchIndex / ukBatches.length) * 15;
-              const batchStep = `UK pricing batch ${batchIndex + 1}/${ukBatches.length} complete...`;
+              const processedSoFar = Math.min((batchIndex + 1) * batchSize, finalAsins.length);
+              const batchStep = `UK pricing: ${processedSoFar} of ${finalAsins.length} ASINs (batch ${batchIndex + 1}/${ukBatches.length})`;
               sendMessage({ 
                 type: 'progress', 
                 data: { 
                   step: batchStep, 
                   progress: batchProgress,
-                  scanId
+                  scanId,
+                  processedCount: processedSoFar,
+                  totalAsins: finalAsins.length
                 } 
               });
-              await updateScanProgress(batchProgress, batchStep, 0);
+              await updateScanProgress(batchProgress, batchStep, processedSoFar);
               
             } catch (batchError: any) {
               console.error('UK pricing batch error:', batchError);
@@ -324,16 +329,18 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          const euStep = `UK pricing complete. Processing EU marketplaces...`;
+          const euStep = `UK pricing complete. Fetching EU prices for ${finalAsins.length} ASINs (4 marketplaces)...`;
           sendMessage({ 
             type: 'progress', 
             data: { 
               step: euStep, 
               progress: 25,
-              scanId
+              scanId,
+              totalAsins: finalAsins.length,
+              processedCount: finalAsins.length // UK done
             } 
           });
-          await updateScanProgress(25, euStep, 0);
+          await updateScanProgress(25, euStep, finalAsins.length);
 
           // OPTIMIZATION 2: Pre-fetch EU marketplace pricing in parallel batches
           const euMarketplaces = Object.entries(MARKETPLACES).filter(([key]) => key !== 'UK');
@@ -395,13 +402,15 @@ export async function POST(request: NextRequest) {
           // Wait for all EU marketplace pricing to complete
           await Promise.all(euPricingPromises);
 
-          const analyzeStep = `All marketplace pricing fetched. Analyzing opportunities...`;
+          const analyzeStep = `Pricing fetched. Analyzing ${finalAsins.length} ASINs for arbitrage opportunities...`;
           sendMessage({ 
             type: 'progress', 
             data: { 
               step: analyzeStep, 
               progress: 45,
-              scanId
+              scanId,
+              totalAsins: finalAsins.length,
+              processedCount: 0
             } 
           });
           await updateScanProgress(45, analyzeStep, 0);
