@@ -194,7 +194,7 @@ export async function POST(request: NextRequest) {
           
           const blacklistedAsins = await blacklistService.getBlacklistedAsins(user.id);
           const { filteredProducts, excludedCount } = blacklistService.filterBlacklistedProducts(
-            validASINs.map(asin => ({ asin })),
+            validASINs.map((asin: string) => ({ asin })),
             blacklistedAsins
           );
 

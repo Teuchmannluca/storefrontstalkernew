@@ -39,6 +39,10 @@ interface SavedScan {
   opportunities_found: number
   started_at: string
   completed_at: string | null
+  progress_percentage?: number
+  current_step?: string
+  processed_count?: number
+  last_updated?: string
   metadata?: {
     exchange_rate?: number
     total_profit?: number
@@ -744,7 +748,7 @@ export default function RecentScansPage() {
                             style={{ width: `${viewingScan.progress_percentage || 0}%` }}
                           />
                         </div>
-                        {viewingScan.processed_count > 0 && (
+                        {viewingScan.processed_count && viewingScan.processed_count > 0 && (
                           <p className="text-sm text-gray-600 mt-2">
                             Processed {viewingScan.processed_count} items
                           </p>

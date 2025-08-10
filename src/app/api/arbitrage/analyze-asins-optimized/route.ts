@@ -224,7 +224,7 @@ export async function POST(request: NextRequest) {
           
           const blacklistedAsins = await blacklistService.getBlacklistedAsins(user.id);
           const { filteredProducts, excludedCount } = blacklistService.filterBlacklistedProducts(
-            validASINs.map(asin => ({ asin })),
+            validASINs.map((asin: string) => ({ asin })),
             blacklistedAsins
           );
 
@@ -247,6 +247,12 @@ export async function POST(request: NextRequest) {
           const batchSize = RATE_LIMITS.COMPETITIVE_PRICING.itemsPerRequest;
           const ukPricingData = new Map<string, any>();
           
+          // Process UK pricing in optimized batches
+          const ukBatches: string[][] = [];
+          for (let i = 0; i < finalAsins.length; i += batchSize) {
+            ukBatches.push(finalAsins.slice(i, Math.min(i + batchSize, finalAsins.length)));
+          }
+
           const ukPricingStep = `Starting UK pricing for ${finalAsins.length} ASINs (${ukBatches.length} batches)...`;
           sendMessage({ 
             type: 'progress', 
@@ -259,12 +265,6 @@ export async function POST(request: NextRequest) {
             } 
           });
           await updateScanProgress(10, ukPricingStep, 0);
-
-          // Process UK pricing in optimized batches
-          const ukBatches = [];
-          for (let i = 0; i < finalAsins.length; i += batchSize) {
-            ukBatches.push(finalAsins.slice(i, Math.min(i + batchSize, finalAsins.length)));
-          }
 
           for (let batchIndex = 0; batchIndex < ukBatches.length; batchIndex++) {
             const batchAsins = ukBatches[batchIndex];
