@@ -42,6 +42,19 @@ interface PriceHistoryInfo {
   lastChecked?: string
 }
 
+interface KeepaData {
+  salesDrops30d: number
+  salesDrops90d: number
+  estimatedMonthlySales: number
+  buyBoxWinRate: number | null
+  competitorCount: number
+  currentPrice: number | null
+  avgPrice30d: number | null
+  minPrice30d: number | null
+  maxPrice30d: number | null
+  outOfStockPercentage: number | null
+}
+
 interface ArbitrageOpportunity {
   asin: string
   productName: string
@@ -64,6 +77,8 @@ interface ArbitrageOpportunity {
     uk: PriceHistoryInfo
     bestEu: PriceHistoryInfo & { marketplace: string }
   }
+  keepaSalesData?: KeepaData | null
+  keepaGraphUrl?: string | null
 }
 
 type SortOption = 'profit' | 'roi' | 'margin' | 'price'
@@ -1007,8 +1022,13 @@ export default function ASINCheckerPage() {
                             {opp.ukSalesRank > 0 && (
                               <span>BSR: #{opp.ukSalesRank.toLocaleString()}</span>
                             )}
-                            {(opp.salesPerMonth !== undefined && opp.salesPerMonth > 0) && (
-                              <span>Sales: ~{opp.salesPerMonth}/month</span>
+                            {(opp.keepaSalesData?.estimatedMonthlySales && opp.keepaSalesData.estimatedMonthlySales > 0) ? (
+                              <span className="text-green-600 font-medium">Keepa Sales: {opp.keepaSalesData.estimatedMonthlySales}/mo</span>
+                            ) : (opp.salesPerMonth !== undefined && opp.salesPerMonth > 0) && (
+                              <span>Est. Sales: ~{opp.salesPerMonth}/mo</span>
+                            )}
+                            {opp.keepaSalesData?.competitorCount && (
+                              <span>Competitors: {opp.keepaSalesData.competitorCount}</span>
                             )}
                           </div>
                           <div className="flex gap-6 mt-2">
@@ -1028,6 +1048,14 @@ export default function ASINCheckerPage() {
                             >
                               Keepa Charts
                             </a>
+                            {opp.keepaGraphUrl && (
+                              <button 
+                                onClick={() => window.open(opp.keepaGraphUrl!, '_blank')}
+                                className="text-purple-600 hover:underline text-sm"
+                              >
+                                Price Graph
+                              </button>
+                            )}
                             <button className="text-purple-600 hover:underline text-sm">SAS</button>
                           </div>
                         </div>
@@ -1278,6 +1306,58 @@ export default function ASINCheckerPage() {
                         })}
                       </div>
                     </div>
+
+                    {/* Keepa Statistics Section */}
+                    {opp.keepaSalesData && (
+                      <div className="mt-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
+                        <h5 className="text-sm font-semibold text-purple-900 mb-3 flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                          Keepa Analytics
+                        </h5>
+                        <div className="grid grid-cols-3 gap-4 text-sm">
+                          <div>
+                            <p className="text-gray-600">Sales Rank Drops</p>
+                            <p className="font-semibold text-purple-900">
+                              30d: {opp.keepaSalesData.salesDrops30d} | 90d: {opp.keepaSalesData.salesDrops90d}
+                            </p>
+                          </div>
+                          {opp.keepaSalesData.buyBoxWinRate !== null && (
+                            <div>
+                              <p className="text-gray-600">Buy Box Win Rate</p>
+                              <p className="font-semibold text-purple-900">{opp.keepaSalesData.buyBoxWinRate.toFixed(1)}%</p>
+                            </div>
+                          )}
+                          {opp.keepaSalesData.avgPrice30d !== null && (
+                            <div>
+                              <p className="text-gray-600">30-Day Avg Price</p>
+                              <p className="font-semibold text-purple-900">£{opp.keepaSalesData.avgPrice30d.toFixed(2)}</p>
+                            </div>
+                          )}
+                          {opp.keepaSalesData.outOfStockPercentage !== null && (
+                            <div>
+                              <p className="text-gray-600">Out of Stock %</p>
+                              <p className={`font-semibold ${opp.keepaSalesData.outOfStockPercentage > 20 ? 'text-red-600' : 'text-green-600'}`}>
+                                {opp.keepaSalesData.outOfStockPercentage.toFixed(1)}%
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                        {opp.keepaSalesData.minPrice30d !== null && opp.keepaSalesData.maxPrice30d !== null && (
+                          <div className="mt-3 pt-3 border-t border-purple-200">
+                            <p className="text-xs text-gray-600">
+                              30-Day Price Range: £{opp.keepaSalesData.minPrice30d.toFixed(2)} - £{opp.keepaSalesData.maxPrice30d.toFixed(2)}
+                              {opp.keepaSalesData.avgPrice30d && (
+                                <span className="ml-2">
+                                  (Volatility: {(((opp.keepaSalesData.maxPrice30d - opp.keepaSalesData.minPrice30d) / opp.keepaSalesData.avgPrice30d) * 100).toFixed(1)}%)
+                                </span>
+                              )}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Price History Summary */}
                     {opp.priceHistory && (!opp.priceHistory.uk.isFirstCheck || !opp.priceHistory.bestEu.isFirstCheck) && (

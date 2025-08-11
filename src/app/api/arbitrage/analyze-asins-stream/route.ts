@@ -10,6 +10,7 @@ import { AppError } from '@/lib/error-handling';
 import { BlacklistService } from '@/lib/blacklist-service';
 import { categorizeProfitLevel } from '@/lib/profit-categorizer';
 import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator';
+import { KeepaProductService } from '@/services/keepa-product-service';
 
 // Marketplace IDs
 const MARKETPLACES = {
@@ -185,6 +186,16 @@ export async function POST(request: NextRequest) {
           const pricingClient = new SPAPICompetitivePricingClient(credentials, spApiConfig);
           const feesClient = new SPAPIProductFeesClient(credentials, spApiConfig);
           const catalogClient = new SPAPICatalogClient(credentials, spApiConfig);
+          
+          // Initialize Keepa service if API key is available
+          let keepaService: KeepaProductService | null = null;
+          const keepaApiKey = process.env.KEEPA_API_KEY;
+          if (keepaApiKey) {
+            console.log('[KEEPA] API key found, initializing service for user:', user.id);
+            keepaService = new KeepaProductService(keepaApiKey, user.id, 2); // UK domain
+          } else {
+            console.log('[KEEPA] No API key found in environment');
+          }
 
           // Initialize blacklist service
           const blacklistService = new BlacklistService(
@@ -200,13 +211,41 @@ export async function POST(request: NextRequest) {
 
           const finalAsins = filteredProducts.map(p => p.asin);
           
+          // Check Keepa token availability
+          let keepaTokenStatus = null;
+          if (keepaService) {
+            try {
+              const tokenStatus = await keepaService.getTokenStatus();
+              const estimateInfo = await keepaService.estimateProcessingTime(finalAsins.length, true);
+              keepaTokenStatus = {
+                available: tokenStatus.availableTokens,
+                needed: estimateInfo.tokensNeeded,
+                waitTime: estimateInfo.waitTimeMs,
+              };
+              
+              if (estimateInfo.waitTimeMs > 0) {
+                sendMessage({ 
+                  type: 'progress', 
+                  data: { 
+                    step: `Keepa tokens: ${tokenStatus.availableTokens} available, ${estimateInfo.tokensNeeded} needed. Wait time: ${Math.ceil(estimateInfo.waitTimeMs / 1000)}s`, 
+                    progress: 3,
+                    scanId
+                  } 
+                });
+              }
+            } catch (error) {
+              console.error('Error checking Keepa tokens:', error);
+            }
+          }
+          
           if (excludedCount > 0) {
             sendMessage({ 
               type: 'progress', 
               data: { 
                 step: `Excluded ${excludedCount} blacklisted ASINs. Processing ${finalAsins.length} ASINs...`, 
                 progress: 5,
-                scanId
+                scanId,
+                keepaTokenStatus
               } 
             });
           }
@@ -375,7 +414,49 @@ export async function POST(request: NextRequest) {
                     console.error('Catalog error for', asin, catalogError);
                   }
 
-                  const salesPerMonth = salesRank > 0 ? estimateMonthlySalesFromRank(salesRank) : 0;
+                  let salesPerMonth = salesRank > 0 ? estimateMonthlySalesFromRank(salesRank) : 0;
+                  let keepaSalesData = null;
+                  let keepaGraphUrl = null;
+                  
+                  // Fetch Keepa data if service is available
+                  if (keepaService) {
+                    try {
+                      console.log(`[KEEPA] Fetching data for ASIN: ${asin}`);
+                      const keepaResult = await keepaService.enrichProduct(asin, true);
+                      if (keepaResult.keepaData) {
+                        keepaSalesData = keepaResult.keepaData;
+                        keepaGraphUrl = keepaResult.graphUrl;
+                        console.log(`[KEEPA] Data received for ${asin}:`, {
+                          estimatedSales: keepaSalesData.estimatedMonthlySales,
+                          salesDrops30d: keepaSalesData.salesDrops30d,
+                          salesDrops90d: keepaSalesData.salesDrops90d,
+                          competitors: keepaSalesData.competitorCount
+                        });
+                        
+                        // Use Keepa's more accurate sales estimate if available
+                        if (keepaSalesData.estimatedMonthlySales > 0) {
+                          salesPerMonth = keepaSalesData.estimatedMonthlySales;
+                        }
+                        
+                        // Update product name if not found from catalog
+                        if (productName === asin && keepaSalesData.title) {
+                          productName = keepaSalesData.title;
+                        }
+                        
+                        // Update product image if not found from catalog
+                        if (!productImage && keepaSalesData.mainImage) {
+                          productImage = keepaSalesData.mainImage;
+                        }
+                      } else {
+                        console.log(`[KEEPA] No data returned for ASIN: ${asin}`);
+                      }
+                    } catch (keepaError) {
+                      console.error('[KEEPA] Error for', asin, keepaError);
+                      // Continue without Keepa data
+                    }
+                  } else {
+                    console.log('[KEEPA] Service not available, skipping Keepa data fetch');
+                  }
 
                   // Calculate fees
                   await rateLimiter.throttle('fees', RATE_LIMITS.PRODUCT_FEES.minInterval);
@@ -466,7 +547,9 @@ export async function POST(request: NextRequest) {
                             best_profit: bestOpportunity.profit,
                             best_roi: bestOpportunity.roi,
                             profit_category: profitCategory,
-                            all_marketplace_prices: { euPrices }
+                            all_marketplace_prices: { euPrices },
+                            keepa_sales_data: keepaSalesData,
+                            keepa_graph_url: keepaGraphUrl
                           });
                       }
 
@@ -479,6 +562,8 @@ export async function POST(request: NextRequest) {
                         amazonFees,
                         referralFee,
                         digitalServicesFee,
+                        keepaSalesData,
+                        keepaGraphUrl,
                         ukCompetitors: ukPricing.numberOfOffers,
                         ukSalesRank: salesRank,
                         salesPerMonth,

@@ -68,6 +68,19 @@ interface PriceHistoryInfo {
   lastChecked?: string
 }
 
+interface KeepaData {
+  salesDrops30d: number
+  salesDrops90d: number
+  estimatedMonthlySales: number
+  buyBoxWinRate: number | null
+  competitorCount: number
+  currentPrice: number | null
+  avgPrice30d: number | null
+  minPrice30d: number | null
+  maxPrice30d: number | null
+  outOfStockPercentage: number | null
+}
+
 interface ArbitrageOpportunity {
   asin: string
   productName: string
@@ -95,6 +108,8 @@ interface ArbitrageOpportunity {
     uk: PriceHistoryInfo
     bestEu: PriceHistoryInfo & { marketplace: string }
   }
+  keepaSalesData?: KeepaData | null
+  keepaGraphUrl?: string | null
 }
 
 export default function RecentScansPage() {
@@ -116,11 +131,12 @@ export default function RecentScansPage() {
   const [blacklistConfirm, setBlacklistConfirm] = useState<{ asin: string; productName: string } | null>(null)
   
   // Sorting and filtering state
-  const [sortBy, setSortBy] = useState<'profit' | 'roi' | 'profitMargin' | 'targetPrice' | 'ukSalesRank'>('profit')
+  const [sortBy, setSortBy] = useState<'profit' | 'roi' | 'profitMargin' | 'targetPrice' | 'ukSalesRank' | 'salesPerMonth'>('profit')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [minProfit, setMinProfit] = useState<number>(0)
   const [minROI, setMinROI] = useState<number>(0)
   const [maxPrice, setMaxPrice] = useState<number>(0)
+  const [minSalesPerMonth, setMinSalesPerMonth] = useState<number>(0)
   const [selectedMarketplace, setSelectedMarketplace] = useState<string>('all')
   const [dealFilter, setDealFilter] = useState<'profitable' | 'profitable-breakeven' | 'all'>('profitable')
   
@@ -266,7 +282,9 @@ export default function RecentScansPage() {
                 roi: opp.best_roi
               },
               euPrices: opp.all_marketplace_prices?.euPrices || [],
-              profitCategory: opp.profit_category
+              profitCategory: opp.profit_category,
+              keepaSalesData: opp.keepa_sales_data,
+              keepaGraphUrl: opp.keepa_graph_url
             }))
             setOpportunities(transformedOpportunities)
           }
@@ -655,6 +673,10 @@ export default function RecentScansPage() {
       // Filter by maximum UK price
       if (maxPrice > 0 && opp.targetPrice > maxPrice) return false
       
+      // Filter by minimum sales per month
+      const monthlySales = opp.keepaSalesData?.estimatedMonthlySales || opp.salesPerMonth || 0
+      if (minSalesPerMonth > 0 && monthlySales < minSalesPerMonth) return false
+      
       // Filter by source marketplace
       if (selectedMarketplace !== 'all' && opp.bestOpportunity.marketplace !== selectedMarketplace) return false
       
@@ -686,6 +708,10 @@ export default function RecentScansPage() {
         case 'ukSalesRank':
           aValue = a.ukSalesRank || 999999
           bValue = b.ukSalesRank || 999999
+          break
+        case 'salesPerMonth':
+          aValue = a.keepaSalesData?.estimatedMonthlySales || a.salesPerMonth || 0
+          bValue = b.keepaSalesData?.estimatedMonthlySales || b.salesPerMonth || 0
           break
         default:
           aValue = a.bestOpportunity.profit
@@ -910,6 +936,24 @@ export default function RecentScansPage() {
 
                   {/* Sorting and Filtering Controls */}
                   <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                    {/* SPM Color Legend */}
+                    <div className="flex items-center justify-center gap-4 mb-4 pb-4 border-b border-gray-200">
+                      <span className="text-sm font-semibold text-gray-700">Sales Per Month (SPM) Indicators:</span>
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-1">
+                          <div className="px-3 py-1 bg-red-100 text-red-700 rounded-lg border border-red-300 font-bold text-sm">0-50</div>
+                          <span className="text-xs text-gray-600">Low Volume</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <div className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-lg border border-yellow-300 font-bold text-sm">50-100</div>
+                          <span className="text-xs text-gray-600">Medium Volume</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <div className="px-3 py-1 bg-green-100 text-green-700 rounded-lg border border-green-300 font-bold text-sm">100+</div>
+                          <span className="text-xs text-gray-600">High Volume</span>
+                        </div>
+                      </div>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
                       {/* Deal Filter */}
                       <div>
@@ -991,6 +1035,7 @@ export default function RecentScansPage() {
                           <option value="profitMargin">Profit Margin (%)</option>
                           <option value="targetPrice">UK Price (£)</option>
                           <option value="ukSalesRank">Sales Rank</option>
+                          <option value="salesPerMonth">Sales/Month</option>
                         </select>
                       </div>
 
@@ -1049,6 +1094,20 @@ export default function RecentScansPage() {
                         />
                       </div>
 
+                      {/* Min Sales Per Month Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Min Sales/Month</label>
+                        <input
+                          type="number"
+                          value={minSalesPerMonth}
+                          onChange={(e) => setMinSalesPerMonth(Number(e.target.value))}
+                          placeholder="0"
+                          min="0"
+                          step="1"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                      </div>
+
                       {/* Marketplace Filter */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Source Market</label>
@@ -1073,6 +1132,7 @@ export default function RecentScansPage() {
                           setMinProfit(0)
                           setMinROI(0)
                           setMaxPrice(0)
+                          setMinSalesPerMonth(0)
                           setSelectedMarketplace('all')
                           setDealFilter('profitable')
                           setSortBy('profit')
@@ -1140,21 +1200,53 @@ export default function RecentScansPage() {
                                   {opp.ukSalesRank > 0 && (
                                     <>
                                       <div className="flex items-center gap-1">
-                                        <span className="text-xs text-gray-600 font-medium">Rank:</span>
+                                        <span className="text-xs text-gray-600 font-medium">BSR:</span>
                                         <span className="text-sm font-semibold text-gray-900">#{opp.ukSalesRank.toLocaleString()}</span>
                                       </div>
-                                      <div className="flex items-center gap-1">
-                                        <span className="text-xs text-gray-600 font-medium">Sales/month:</span>
-                                        <span className="text-sm font-semibold text-green-600">
-                                          {opp.salesPerMonth > 0 
-                                            ? opp.salesPerMonth.toLocaleString()
-                                            : opp.ukSalesRank > 0 
-                                              ? `~${formatSalesEstimate(estimateMonthlySalesFromRank(opp.ukSalesRank))}`
-                                              : 'No data'
-                                          }
-                                        </span>
-                                      </div>
                                     </>
+                                  )}
+                                  
+                                  {/* Sales Per Month with Color Coding */}
+                                  {(() => {
+                                    const monthlySales = opp.keepaSalesData?.estimatedMonthlySales || opp.salesPerMonth || 
+                                      (opp.ukSalesRank > 0 ? estimateMonthlySalesFromRank(opp.ukSalesRank) : 0);
+                                    
+                                    let colorClass = 'text-gray-500'; // Default for 0 or no data
+                                    let bgClass = 'bg-gray-100';
+                                    let borderClass = 'border-gray-300';
+                                    
+                                    if (monthlySales > 100) {
+                                      colorClass = 'text-green-700';
+                                      bgClass = 'bg-green-100';
+                                      borderClass = 'border-green-300';
+                                    } else if (monthlySales >= 50) {
+                                      colorClass = 'text-yellow-700';
+                                      bgClass = 'bg-yellow-100';
+                                      borderClass = 'border-yellow-300';
+                                    } else if (monthlySales > 0) {
+                                      colorClass = 'text-red-700';
+                                      bgClass = 'bg-red-100';
+                                      borderClass = 'border-red-300';
+                                    }
+                                    
+                                    return (
+                                      <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${bgClass} border ${borderClass}`}>
+                                        <span className="text-xs font-medium text-gray-600">SPM:</span>
+                                        <span className={`text-sm font-bold ${colorClass}`}>
+                                          {monthlySales > 0 ? monthlySales.toLocaleString() : 'N/A'}
+                                        </span>
+                                        {opp.keepaSalesData && (
+                                          <span className="text-xs text-gray-500">(Keepa)</span>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                  
+                                  {opp.keepaSalesData?.competitorCount && (
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-xs text-gray-600 font-medium">Competitors:</span>
+                                      <span className="text-sm font-semibold text-gray-900">{opp.keepaSalesData.competitorCount}</span>
+                                    </div>
                                   )}
                                 </div>
                                 
@@ -1181,6 +1273,19 @@ export default function RecentScansPage() {
                                     </svg>
                                     Keepa Charts
                                   </a>
+                                  {opp.keepaGraphUrl && (
+                                    <a
+                                      href={opp.keepaGraphUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-purple-600 hover:underline text-sm flex items-center gap-1"
+                                    >
+                                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M3 3v18h18v-2H5V3H3zm14 10l-4-4-4 8-2-4-2 4h12z"/>
+                                      </svg>
+                                      Price Graph
+                                    </a>
+                                  )}
                                   <a
                                     href={`https://sas.selleramp.com/sas/lookup/?searchterm=${opp.asin}&sas_cost_price=${(opp.bestOpportunity?.sourcePriceGBP || 0).toFixed(2)}&sas_sale_price=${(opp.targetPrice || 0).toFixed(2)}`}
                                     target="_blank"
@@ -1631,6 +1736,71 @@ export default function RecentScansPage() {
                               </div>
                             </div>
                           </div>
+
+                          {/* Keepa Statistics Section */}
+                          {opp.keepaSalesData && (
+                            <div className="mt-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
+                              <h5 className="text-sm font-semibold text-purple-900 mb-3 flex items-center gap-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                </svg>
+                                Keepa Analytics
+                              </h5>
+                              <div className="grid grid-cols-3 gap-4 text-sm">
+                                <div>
+                                  <p className="text-gray-600">Sales Rank Drops</p>
+                                  <p className="font-semibold text-purple-900">
+                                    30d: {opp.keepaSalesData.salesDrops30d} | 90d: {opp.keepaSalesData.salesDrops90d}
+                                  </p>
+                                </div>
+                                {opp.keepaSalesData.buyBoxWinRate !== null && (
+                                  <div>
+                                    <p className="text-gray-600">Buy Box Win Rate</p>
+                                    <p className="font-semibold text-purple-900">{opp.keepaSalesData.buyBoxWinRate.toFixed(1)}%</p>
+                                  </div>
+                                )}
+                                {opp.keepaSalesData.avgPrice30d !== null && (
+                                  <div>
+                                    <p className="text-gray-600">30-Day Avg Price</p>
+                                    <p className="font-semibold text-purple-900">£{opp.keepaSalesData.avgPrice30d.toFixed(2)}</p>
+                                  </div>
+                                )}
+                                {opp.keepaSalesData.outOfStockPercentage !== null && (
+                                  <div>
+                                    <p className="text-gray-600">Out of Stock %</p>
+                                    <p className={`font-semibold ${opp.keepaSalesData.outOfStockPercentage > 20 ? 'text-red-600' : 'text-green-600'}`}>
+                                      {opp.keepaSalesData.outOfStockPercentage.toFixed(1)}%
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                              {opp.keepaSalesData.minPrice30d !== null && opp.keepaSalesData.maxPrice30d !== null && (
+                                <div className="mt-3 pt-3 border-t border-purple-200">
+                                  <p className="text-xs text-gray-600">
+                                    30-Day Price Range: £{opp.keepaSalesData.minPrice30d.toFixed(2)} - £{opp.keepaSalesData.maxPrice30d.toFixed(2)}
+                                    {opp.keepaSalesData.avgPrice30d && (
+                                      <span className="ml-2">
+                                        (Volatility: {(((opp.keepaSalesData.maxPrice30d - opp.keepaSalesData.minPrice30d) / opp.keepaSalesData.avgPrice30d) * 100).toFixed(1)}%)
+                                      </span>
+                                    )}
+                                  </p>
+                                </div>
+                              )}
+                              {opp.keepaGraphUrl && (
+                                <div className="mt-3 pt-3 border-t border-purple-200">
+                                  <button 
+                                    onClick={() => window.open(opp.keepaGraphUrl!, '_blank')}
+                                    className="w-full px-3 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors flex items-center justify-center gap-2"
+                                  >
+                                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                      <path d="M3 3v18h18v-2H5V3H3zm14 10l-4-4-4 8-2-4-2 4h12z"/>
+                                    </svg>
+                                    View Price History Graph
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
 
                           {/* All EU Marketplace Prices */}
                           {opp.euPrices && opp.euPrices.length > 0 && (
