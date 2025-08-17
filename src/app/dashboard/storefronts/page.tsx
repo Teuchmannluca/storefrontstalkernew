@@ -7,6 +7,11 @@ import { supabase } from '@/lib/supabase'
 import { User } from '@supabase/supabase-js'
 import Sidebar from '@/components/Sidebar'
 import AddStorefrontModal from '@/components/AddStorefrontModal'
+import { PremiumButton } from '@/components/ui/premium-button'
+import { SearchInput } from '@/components/ui/premium-input'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { PremiumCard, CardHeader, CardTitle, CardContent } from '@/components/ui/premium-card'
+import { ListSkeleton } from '@/components/ui/premium-skeleton'
 import { 
   BellIcon, 
   MagnifyingGlassIcon,
@@ -19,7 +24,9 @@ import {
   ListBulletIcon,
   FunnelIcon,
   ChevronDownIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  EyeIcon,
+  ChartBarIcon
 } from '@heroicons/react/24/outline'
 import { Menu, Transition } from '@headlessui/react'
 import { Fragment } from 'react'
@@ -300,51 +307,63 @@ export default function StorefrontsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+      <div className="flex h-screen bg-gray-25">
+        <Sidebar onSignOut={() => {}} onAddStorefront={() => {}} />
+        <div className="flex-1 p-8">
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <div className="skeleton h-8 w-64"></div>
+              <div className="skeleton h-4 w-96"></div>
+            </div>
+            <ListSkeleton items={6} />
+          </div>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-gray-25">
       {/* Sidebar */}
       <Sidebar onSignOut={handleSignOut} onAddStorefront={() => setShowAddModal(true)} />
 
       {/* Main Content */}
-      <div className="flex-1 overflow-auto bg-gray-50">
-        {/* Header */}
-        <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
-          <div className="px-8 py-4 flex items-center justify-between">
-            <h1 className="text-2xl font-semibold text-gray-800">Storefronts</h1>
+      <div className="flex-1 overflow-auto bg-gray-25">
+        {/* Premium Header */}
+        <header className="bg-white/80 backdrop-blur-lg border-b border-gray-100 sticky top-0 z-10">
+          <div className="px-8 py-6 flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-1">Storefronts</h1>
+              <p className="text-sm text-gray-600">
+                Manage and monitor your Amazon storefront connections
+              </p>
+            </div>
             
             <div className="flex items-center gap-4">
-              {/* Search */}
-              <div className="relative">
-                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search storefronts..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                />
-              </div>
+              {/* Quick Actions */}
+              <PremiumButton 
+                onClick={() => setShowAddModal(true)}
+                icon={<PlusIcon className="w-5 h-5" />}
+                size="md"
+              >
+                Add Storefront
+              </PremiumButton>
               
               {/* Notifications */}
-              <button className="relative p-2 text-gray-500 hover:text-gray-700 bg-gray-50 rounded-xl hover:bg-gray-100 transition-all">
-                <BellIcon className="w-6 h-6" />
+              <button className="relative p-3 text-gray-500 hover:text-gray-700 bg-white rounded-xl hover:bg-gray-50 transition-all shadow-sm border border-gray-200">
+                <BellIcon className="w-5 h-5" />
+                <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full"></span>
               </button>
               
               {/* User Profile */}
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 bg-white rounded-xl p-3 shadow-sm border border-gray-200">
                 <div className="text-right">
-                  <p className="text-sm font-medium text-gray-700">
+                  <p className="text-sm font-medium text-gray-900">
                     {user?.email?.split('@')[0] || 'User'}
                   </p>
-                  <p className="text-xs text-gray-500">Admin</p>
+                  <p className="text-xs text-gray-500">Administrator</p>
                 </div>
-                <div className="w-10 h-10 bg-gradient-to-br from-violet-400 to-indigo-400 rounded-full flex items-center justify-center text-white font-medium">
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center text-white font-semibold shadow-sm">
                   {user?.email?.[0]?.toUpperCase() || 'U'}
                 </div>
               </div>
@@ -353,26 +372,39 @@ export default function StorefrontsPage() {
         </header>
 
         {/* Storefronts Content */}
-        <div className="p-8">
-          {/* Controls Bar */}
-          <div className="mb-6 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <h2 className="text-xl font-semibold text-gray-800">
-                All Storefronts ({sortedStorefronts.length})
-              </h2>
+        <div className="p-8 space-y-8">
+          {/* Enhanced Controls Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 animate-fade-in-up">
+            <div className="flex items-center gap-6">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">
+                  All Storefronts
+                </h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  {sortedStorefronts.length} storefront{sortedStorefronts.length !== 1 ? 's' : ''} total
+                </p>
+              </div>
               
-              {/* View Mode Toggle */}
-              <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
+              {/* Premium View Mode Toggle */}
+              <div className="flex items-center gap-1 bg-white border border-gray-200 p-1 rounded-xl shadow-sm">
                 <button
                   onClick={() => setViewMode('grid')}
-                  className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                  className={`p-2.5 rounded-lg transition-all duration-200 ${
+                    viewMode === 'grid' 
+                      ? 'bg-blue-50 text-blue-600 shadow-sm' 
+                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                  }`}
                   title="Grid view"
                 >
                   <Squares2X2Icon className="w-5 h-5" />
                 </button>
                 <button
                   onClick={() => setViewMode('list')}
-                  className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                  className={`p-2.5 rounded-lg transition-all duration-200 ${
+                    viewMode === 'list' 
+                      ? 'bg-blue-50 text-blue-600 shadow-sm' 
+                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                  }`}
                   title="List view"
                 >
                   <ListBulletIcon className="w-5 h-5" />
@@ -380,7 +412,16 @@ export default function StorefrontsPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-4">
+              {/* Premium Search */}
+              <SearchInput
+                placeholder="Search storefronts..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-80"
+              />
+
+              <div className="flex items-center gap-3">
               {/* Sort Dropdown */}
               <Menu as="div" className="relative">
                 <Menu.Button className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
@@ -464,24 +505,26 @@ export default function StorefrontsPage() {
                 </Transition>
               </Menu>
 
-              {/* Update All Button */}
-              <button 
+              {/* Premium Action Buttons */}
+              <PremiumButton
+                variant="secondary"
                 onClick={handleUpdateAllStorefronts}
                 disabled={isUpdatingAll || storefronts.length === 0}
-                className="inline-flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-xl font-medium hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                loading={isUpdatingAll}
+                loadingText="Updating..."
+                icon={<ArrowPathIcon className="w-5 h-5" />}
               >
-                <ArrowPathIcon className={`w-5 h-5 ${isUpdatingAll ? 'animate-spin' : ''}`} />
-                {isUpdatingAll ? 'Updating...' : 'Update All'}
-              </button>
+                Update All
+              </PremiumButton>
 
-              {/* Add Button */}
-              <button 
+              <PremiumButton
                 onClick={() => setShowAddModal(true)}
-                className="inline-flex items-center gap-2 bg-gradient-to-r from-violet-500 to-indigo-500 text-white px-4 py-2 rounded-xl font-medium hover:from-violet-600 hover:to-indigo-600 transition-all shadow-lg"
+                icon={<PlusIcon className="w-5 h-5" />}
+                gradient
               >
-                <PlusIcon className="w-5 h-5" />
                 Add Storefront
-              </button>
+              </PremiumButton>
+              </div>
             </div>
           </div>
 

@@ -7,6 +7,11 @@ import Sidebar from '@/components/Sidebar'
 import AddStorefrontModal from '@/components/AddStorefrontModal'
 import SavedScansPanel from '@/components/SavedScansPanel'
 import SavedScansInline from '@/components/SavedScansInline'
+import { PremiumButton } from '@/components/ui/premium-button'
+import { PremiumSelect } from '@/components/ui/premium-select'
+import { PremiumCard, CardHeader, CardTitle, CardContent } from '@/components/ui/premium-card'
+import { PremiumTable } from '@/components/ui/premium-table'
+import { DashboardSkeleton } from '@/components/ui/premium-skeleton'
 import { estimateMonthlySalesFromRank, formatSalesEstimate } from '@/lib/sales-estimator'
 import { type ProfitCategory, getProfitCategoryColor, getProfitCategoryBgColor, getProfitCategoryBadgeColor, getProfitCategoryLabel, getProfitCategoryIcon } from '@/lib/profit-categorizer'
 import { 
@@ -21,7 +26,10 @@ import {
   ShoppingBagIcon,
   BuildingStorefrontIcon,
   NoSymbolIcon,
-  FolderPlusIcon
+  FolderPlusIcon,
+  CurrencyPoundIcon,
+  ArrowTrendingUpIcon,
+  ChartBarIcon
 } from '@heroicons/react/24/outline'
 import { Fragment } from 'react'
 import { Listbox, Transition } from '@headlessui/react'
@@ -840,20 +848,54 @@ function A2AEUPageContent() {
   })
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <>
+    <div className="flex h-screen bg-gray-25">
       <Sidebar 
         onSignOut={handleSignOut} 
         onAddStorefront={() => setShowAddStorefrontModal(true)}
       />
       
-      <div className="flex-1 overflow-auto">
-        <div className="p-8">
-          {/* Header */}
-          <div className="mb-8 flex items-center justify-between">
+      <div className="flex-1 overflow-auto bg-gray-25">
+        {/* Premium Header */}
+        <header className="bg-white/80 backdrop-blur-lg border-b border-gray-100 sticky top-0 z-10">
+          <div className="px-8 py-6 flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">A2A EU Deals</h1>
-              <p className="text-gray-600">Find profitable Amazon UK to EU arbitrage opportunities</p>
+              <h1 className="text-3xl font-bold text-gray-900 mb-1">A2A EU Deals</h1>
+              <p className="text-sm text-gray-600">
+                Find profitable Amazon UK to EU arbitrage opportunities with real-time analysis
+              </p>
             </div>
+            
+            <div className="flex items-center gap-4">
+              {/* Quick Actions */}
+              <PremiumButton 
+                onClick={() => setShowAddStorefrontModal(true)}
+                icon={<BuildingStorefrontIcon className="w-5 h-5" />}
+                size="md"
+                variant="secondary"
+              >
+                Add Storefront
+              </PremiumButton>
+              
+              {/* Status Indicator */}
+              <div className="flex items-center gap-3 bg-white rounded-xl p-3 shadow-sm border border-gray-200">
+                <div className="text-right">
+                  <p className="text-sm font-medium text-gray-900">
+                    {analyzing ? 'Analyzing...' : 'Ready'}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {opportunities.length} deals found
+                  </p>
+                </div>
+                <div className={`w-3 h-3 rounded-full ${analyzing ? 'bg-amber-400 animate-pulse' : 'bg-green-400'}`}></div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="p-8 space-y-8">
+          {/* Main Content */}
+          <div className="animate-fade-in-up">
             <button
               onClick={() => {
                 const recentScansElement = document.getElementById('recent-scans')
@@ -879,51 +921,55 @@ function A2AEUPageContent() {
 
           {/* Storefront Selector */}
           {!loading && storefronts.length > 0 && (
-            <div className="bg-gradient-to-br from-white to-gray-50 rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Select Storefronts</h3>
-                  <p className="text-sm text-gray-600">Choose storefronts to analyse deals</p>
+            <PremiumCard>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-xl">Select Storefronts</CardTitle>
+                    <p className="text-sm text-gray-600 mt-1">Choose storefronts to analyse for profitable deals</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                      {storefronts.length} storefront{storefronts.length > 1 ? 's' : ''} available
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-500">
-                    {storefronts.length} storefront{storefronts.length > 1 ? 's' : ''} available
-                  </span>
-                </div>
-              </div>
+              </CardHeader>
+              <CardContent>
 
               {/* Mode Switcher */}
-              <div className="mb-4">
-                <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit">
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-3">Selection Mode</label>
+                <div className="flex items-center gap-1 bg-white border border-gray-200 p-1 rounded-xl shadow-sm w-fit">
                   <button
                     onClick={() => handleSelectionModeChange('single')}
-                    className={`px-3 py-1.5 text-sm font-medium rounded transition-all ${
+                    className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-all duration-200 ${
                       selectionMode === 'single'
-                        ? 'bg-white text-indigo-600 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
+                        ? 'bg-blue-50 text-blue-600 shadow-sm border border-blue-200'
+                        : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
                     }`}
                   >
-                    Single
+                    Single Storefront
                   </button>
                   <button
                     onClick={() => handleSelectionModeChange('multiple')}
-                    className={`px-3 py-1.5 text-sm font-medium rounded transition-all ${
+                    className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-all duration-200 ${
                       selectionMode === 'multiple'
-                        ? 'bg-white text-indigo-600 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
+                        ? 'bg-blue-50 text-blue-600 shadow-sm border border-blue-200'
+                        : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
                     }`}
                   >
-                    Multiple
+                    Multiple Selection
                   </button>
                   <button
                     onClick={() => handleSelectionModeChange('all')}
-                    className={`px-3 py-1.5 text-sm font-medium rounded transition-all ${
+                    className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-all duration-200 ${
                       selectionMode === 'all'
-                        ? 'bg-white text-indigo-600 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
+                        ? 'bg-blue-50 text-blue-600 shadow-sm border border-blue-200'
+                        : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
                     }`}
                   >
-                    All
+                    All Storefronts
                   </button>
                 </div>
               </div>
@@ -1144,80 +1190,51 @@ function A2AEUPageContent() {
               <div className="mt-4 flex gap-3">
                 {/* Single Storefront Analysis */}
                 {selectionMode === 'single' && (
-                  <button
+                  <PremiumButton
                     onClick={analyzeArbitrage}
                     disabled={!selectedStorefront || analyzing || analyzingSelectedStorefronts || analyzingAllSellers || productCount === 0}
-                    className="px-4 py-2.5 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-lg font-medium text-sm hover:from-violet-600 hover:to-indigo-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    loading={analyzing}
+                    loadingText="Analyzing..."
+                    gradient
+                    size="lg"
+                    icon={productCount === 0 ? <ExclamationTriangleIcon className="h-5 w-5" /> : <SparklesIcon className="h-5 w-5" />}
                   >
-                    {analyzing ? (
-                      <>
-                        <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                        Analyzing...
-                      </>
-                    ) : productCount === 0 ? (
-                      <>
-                        <ExclamationTriangleIcon className="h-4 w-4" />
-                        Sync First
-                      </>
-                    ) : (
-                      <>
-                        <SparklesIcon className="h-4 w-4" />
-                        Analyze Storefront
-                      </>
-                    )}
-                  </button>
+                    {productCount === 0 ? 'Sync First' : 'Analyze Storefront'}
+                  </PremiumButton>
                 )}
 
                 {/* Multiple Storefronts Analysis */}
                 {selectionMode === 'multiple' && (
-                  <button
+                  <PremiumButton
                     onClick={analyzeSelectedStorefronts}
                     disabled={selectedStorefronts.length === 0 || analyzingSelectedStorefronts || analyzing || analyzingAllSellers || productCount === 0}
-                    className="px-4 py-2.5 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-lg font-medium text-sm hover:from-orange-600 hover:to-red-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    loading={analyzingSelectedStorefronts}
+                    loadingText="Analyzing..."
+                    variant="secondary"
+                    size="lg"
+                    icon={selectedStorefronts.length === 0 ? <ExclamationTriangleIcon className="h-5 w-5" /> : 
+                          productCount === 0 ? <ExclamationTriangleIcon className="h-5 w-5" /> : 
+                          <BuildingStorefrontIcon className="h-5 w-5" />}
                   >
-                    {analyzingSelectedStorefronts ? (
-                      <>
-                        <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                        Analyzing...
-                      </>
-                    ) : selectedStorefronts.length === 0 ? (
-                      <>
-                        <ExclamationTriangleIcon className="h-4 w-4" />
-                        Select Storefronts
-                      </>
-                    ) : productCount === 0 ? (
-                      <>
-                        <ExclamationTriangleIcon className="h-4 w-4" />
-                        No Products
-                      </>
-                    ) : (
-                      <>
-                        <BuildingStorefrontIcon className="h-4 w-4" />
-                        Analyze {selectedStorefronts.length} Storefront{selectedStorefronts.length > 1 ? 's' : ''}
-                      </>
-                    )}
-                  </button>
+                    {selectedStorefronts.length === 0 ? 'Select Storefronts' :
+                     productCount === 0 ? 'No Products' :
+                     `Analyze ${selectedStorefronts.length} Storefront${selectedStorefronts.length > 1 ? 's' : ''}`}
+                  </PremiumButton>
                 )}
                 
                 {/* All Sellers Analysis */}
                 {selectionMode === 'all' && (
-                  <button
+                  <PremiumButton
                     onClick={analyzeAllSellers}
                     disabled={analyzing || analyzingAllSellers || analyzingSelectedStorefronts || storefronts.length === 0}
-                    className="px-4 py-2.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-medium text-sm hover:from-green-600 hover:to-emerald-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    loading={analyzingAllSellers}
+                    loadingText="Analyzing All..."
+                    variant="secondary"
+                    size="lg"
+                    icon={<UserGroupIcon className="h-5 w-5" />}
                   >
-                    {analyzingAllSellers ? (
-                      <>
-                        <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                        Analyzing All...
-                      </>
-                    ) : (
-                      <>
-                        <UserGroupIcon className="h-4 w-4" />
-                        All Sellers ({storefronts.length})
-                      </>
-                    )}
-                  </button>
+                    All Sellers ({storefronts.length})
+                  </PremiumButton>
                 )}
               </div>
               
@@ -1271,22 +1288,31 @@ function A2AEUPageContent() {
                   </div>
                 </div>
               )}
-            </div>
+              </CardContent>
+            </PremiumCard>
           )}
+
+          </div>
 
           {/* No Storefronts Message */}
           {!loading && storefronts.length === 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
-              <BuildingStorefrontIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Storefronts Found</h3>
-              <p className="text-gray-600 mb-4">You don&apos;t have any storefronts yet. Add your first storefront to start analysing deals.</p>
-              <button
-                onClick={() => setShowAddStorefrontModal(true)}
-                className="px-4 py-2 bg-gradient-to-r from-violet-500 to-indigo-500 text-white rounded-xl font-medium hover:from-violet-600 hover:to-indigo-600 transition"
-              >
-                Add Your First Storefront
-              </button>
-            </div>
+            <PremiumCard className="text-center">
+              <CardContent className="py-12">
+                <div className="w-20 h-20 bg-gradient-to-br from-violet-100 to-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                  <BuildingStorefrontIcon className="w-10 h-10 text-indigo-600" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">No Storefronts Found</h3>
+                <p className="text-gray-600 mb-6 max-w-md mx-auto">You don&apos;t have any storefronts yet. Add your first storefront to start analyzing profitable arbitrage deals.</p>
+                <PremiumButton
+                  onClick={() => setShowAddStorefrontModal(true)}
+                  gradient
+                  size="lg"
+                  icon={<BuildingStorefrontIcon className="w-5 h-5" />}
+                >
+                  Add Your First Storefront
+                </PremiumButton>
+              </CardContent>
+            </PremiumCard>
           )}
 
 
@@ -2182,10 +2208,10 @@ function A2AEUPageContent() {
               })()}
             </div>
           )}
-          
         </div>
       </div>
 
+      {/* Modals */}
       {/* Blacklist Confirmation Dialog */}
       {blacklistConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -2200,54 +2226,49 @@ function A2AEUPageContent() {
               </div>
             </div>
             
-            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-              <p className="font-medium text-gray-900">{blacklistConfirm.productName}</p>
-              <p className="text-sm text-gray-600">ASIN: {blacklistConfirm.asin}</p>
+            <div className="mb-6">
+              <p className="text-sm text-gray-700">
+                Are you sure you want to blacklist <strong>{blacklistConfirm?.productName}</strong> (ASIN: {blacklistConfirm?.asin})?
+              </p>
             </div>
-
-            {blacklistError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-700">{blacklistError}</p>
-              </div>
-            )}
-
+            
             <div className="flex gap-3 justify-end">
               <button
-                onClick={handleBlacklistCancel}
-                disabled={isBlacklisting}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+                onClick={() => setBlacklistConfirm(null)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition"
               >
                 Cancel
               </button>
               <button
                 onClick={handleBlacklistConfirm}
                 disabled={isBlacklisting}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition disabled:opacity-50"
               >
-                {isBlacklisting && (
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                {isBlacklisting ? (
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Blacklisting...
+                  </div>
+                ) : (
+                  'Blacklist ASIN'
                 )}
-                Blacklist ASIN
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Success/Error Messages */}
-      {(blacklistSuccess || blacklistError) && !blacklistConfirm && (
-        <div className="fixed top-4 right-4 z-50">
-          <div className={`p-4 rounded-lg shadow-lg ${blacklistSuccess ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-            <div className="flex items-center gap-2">
-              {blacklistSuccess ? (
-                <CheckCircleIcon className="w-5 h-5 text-green-600" />
-              ) : (
-                <XCircleIcon className="w-5 h-5 text-red-600" />
-              )}
-              <p className={`text-sm font-medium ${blacklistSuccess ? 'text-green-700' : 'text-red-700'}`}>
-                {blacklistSuccess || blacklistError}
-              </p>
-            </div>
+            
+            {(blacklistError || blacklistSuccess) && (
+              <div className="mt-4 p-3 rounded-lg bg-gray-50">
+                <div className="flex items-center gap-2">
+                  {blacklistSuccess ? (
+                    <CheckCircleIcon className="w-5 h-5 text-green-600" />
+                  ) : (
+                    <ExclamationTriangleIcon className="w-5 h-5 text-red-600" />
+                  )}
+                  <p className={`text-sm font-medium ${blacklistSuccess ? 'text-green-700' : 'text-red-700'}`}>
+                    {blacklistSuccess || blacklistError}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2289,7 +2310,7 @@ function A2AEUPageContent() {
           fetchStorefronts()
         }}
       />
-    </div>
+    </>
   )
 }
 

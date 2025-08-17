@@ -12,8 +12,10 @@ export async function errorHandlerMiddleware(
   try {
     return await handler();
   } catch (error) {
-    // Log error details
-    console.error(`[${request.method}] ${request.url}:`, error);
+    // Log error details - sanitize user input to prevent format string injection
+    const method = String(request.method).replace(/%/g, '%%');
+    const url = String(request.url).replace(/%/g, '%%');
+    console.error('[%s] %s:', method, url, error);
     
     // Return error response
     return ErrorHandler.getInstance().handleError(error);

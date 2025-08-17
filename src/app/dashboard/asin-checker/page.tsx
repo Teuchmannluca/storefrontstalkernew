@@ -82,7 +82,7 @@ interface ArbitrageOpportunity {
 }
 
 type SortOption = 'profit' | 'roi' | 'margin' | 'price'
-type ProfitFilter = 'profitable' | 'include-breakeven' | 'all'
+type ProfitFilter = 'profitable' | 'include-breakeven' | 'all' | 'new-deals'
 
 export default function ASINCheckerPage() {
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([])
@@ -419,7 +419,8 @@ export default function ASINCheckerPage() {
           'Authorization': `Bearer ${session.access_token}`
         },
         body: JSON.stringify({
-          asins: finalAsins
+          asins: finalAsins,
+          includeKeepa: false  // Set to false for faster processing
         })
       })
       
@@ -854,6 +855,7 @@ export default function ASINCheckerPage() {
                         className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       >
                         <option value="profitable">Profitable Only</option>
+                        <option value="new-deals">New Profitable Deals</option>
                         <option value="include-breakeven">Include Break-Even</option>
                         <option value="all">Show All Deals</option>
                       </select>
@@ -946,6 +948,12 @@ export default function ASINCheckerPage() {
                   switch (profitFilter) {
                     case 'profitable':
                       return profitCategory === 'profitable';
+                    case 'new-deals':
+                      // Show deals that are now profitable but weren't before (price changes made them profitable)
+                      return profitCategory === 'profitable' && 
+                             opp.priceHistory && 
+                             (!opp.priceHistory.uk.isFirstCheck || !opp.priceHistory.bestEu.isFirstCheck) &&
+                             (opp.priceHistory.uk.changePercentage !== null || opp.priceHistory.bestEu.changePercentage !== null);
                     case 'include-breakeven':
                       return profitCategory === 'profitable' || profitCategory === 'breakeven';
                     case 'all':
@@ -961,6 +969,8 @@ export default function ASINCheckerPage() {
                       <p className="text-yellow-800 font-medium">
                         {profitFilter === 'profitable' 
                           ? 'No profitable opportunities found yet'
+                          : profitFilter === 'new-deals'
+                            ? 'No new profitable deals found yet'
                           : profitFilter === 'include-breakeven'
                             ? 'No profitable or break-even opportunities found yet'
                             : 'No opportunities found yet'}
@@ -1070,6 +1080,15 @@ export default function ASINCheckerPage() {
                         <div className="flex items-center justify-end gap-1 mt-2">
                           <span className={getProfitCategoryColor(profitCategory)}>{getProfitCategoryIcon(profitCategory)}</span>
                           <span className={`${getProfitCategoryColor(profitCategory)} font-medium`}>{getProfitCategoryLabel(profitCategory)}</span>
+                          {/* New Deal Badge */}
+                          {profitCategory === 'profitable' && 
+                           opp.priceHistory && 
+                           (!opp.priceHistory.uk.isFirstCheck || !opp.priceHistory.bestEu.isFirstCheck) &&
+                           (opp.priceHistory.uk.changePercentage !== null || opp.priceHistory.bestEu.changePercentage !== null) && (
+                            <span className="ml-2 px-2 py-1 bg-orange-100 text-orange-700 rounded-lg text-xs font-bold animate-pulse">
+                              🔥 NEW DEAL
+                            </span>
+                          )}
                         </div>
                         <div className="flex gap-8 mt-4 text-sm">
                           <div>

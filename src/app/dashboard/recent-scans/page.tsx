@@ -110,6 +110,7 @@ interface ArbitrageOpportunity {
   }
   keepaSalesData?: KeepaData | null
   keepaGraphUrl?: string | null
+  isNewProduct?: boolean
 }
 
 export default function RecentScansPage() {
@@ -139,6 +140,8 @@ export default function RecentScansPage() {
   const [minSalesPerMonth, setMinSalesPerMonth] = useState<number>(0)
   const [selectedMarketplace, setSelectedMarketplace] = useState<string>('all')
   const [dealFilter, setDealFilter] = useState<'profitable' | 'profitable-breakeven' | 'all'>('profitable')
+  const [newProductFilter, setNewProductFilter] = useState<'new' | 'existing' | 'all'>('all')
+  const [priceChangeFilter, setPriceChangeFilter] = useState<'price-increased' | 'price-decreased' | 'profit-improved' | 'profit-worsened' | 'all'>('all')
   
   // Delete functionality state
   const [deletingScanId, setDeletingScanId] = useState<string | null>(null)
@@ -263,6 +266,7 @@ export default function RecentScansPage() {
           
           // Transform opportunities to the expected format
           if (fetchedOpportunities && fetchedOpportunities.length > 0) {
+            console.log('Raw opportunities from API:', fetchedOpportunities.slice(0, 2)) // Debug first 2 items
             const transformedOpportunities = fetchedOpportunities.map((opp: any) => ({
               asin: opp.asin,
               productName: opp.product_name,
@@ -284,8 +288,11 @@ export default function RecentScansPage() {
               euPrices: opp.all_marketplace_prices?.euPrices || [],
               profitCategory: opp.profit_category,
               keepaSalesData: opp.keepa_sales_data,
-              keepaGraphUrl: opp.keepa_graph_url
+              keepaGraphUrl: opp.keepa_graph_url,
+              priceHistory: opp.priceHistory,
+              isNewProduct: opp.isNewProduct || false
             }))
+            console.log('Transformed opportunities:', transformedOpportunities.slice(0, 2)) // Debug first 2 items
             setOpportunities(transformedOpportunities)
           }
           
@@ -392,7 +399,9 @@ export default function RecentScansPage() {
           roi: parseFloat(opp.best_roi || '0'),
           totalCost: parseFloat(opp.best_source_price_gbp || '0') + parseFloat(opp.amazon_fees || '0') + parseFloat(opp.digital_services_fee || '0')
         },
-        storefronts: opp.storefronts || []
+        storefronts: opp.storefronts || [],
+        priceHistory: opp.priceHistory,
+        isNewProduct: opp.isNewProduct || false
       }))
       
       console.log('Transformed opportunities:', transformedOpportunities)
@@ -662,6 +671,42 @@ export default function RecentScansPage() {
         case 'all':
           // Show all deals
           break;
+      }
+      
+      // Filter by new/existing products
+      switch (newProductFilter) {
+        case 'new':
+          if (!opp.isNewProduct) return false;
+          break;
+        case 'existing':
+          if (opp.isNewProduct) return false;
+          break;
+        case 'all':
+          // Show all products
+          break;
+      }
+      
+      // Filter by price changes
+      if (priceChangeFilter !== 'all' && opp.priceHistory) {
+        const ukHistory = opp.priceHistory.uk;
+        const euHistory = opp.priceHistory.bestEu;
+        
+        switch (priceChangeFilter) {
+          case 'price-increased':
+            if (!ukHistory || ukHistory.isFirstCheck || !ukHistory.changePercentage || ukHistory.changePercentage <= 0) return false;
+            break;
+          case 'price-decreased':
+            if (!ukHistory || ukHistory.isFirstCheck || !ukHistory.changePercentage || ukHistory.changePercentage >= 0) return false;
+            break;
+          case 'profit-improved':
+            // Check if EU price decreased (profit improved)
+            if (!euHistory || euHistory.isFirstCheck || !euHistory.changePercentage || euHistory.changePercentage >= 0) return false;
+            break;
+          case 'profit-worsened':
+            // Check if EU price increased (profit worsened)
+            if (!euHistory || euHistory.isFirstCheck || !euHistory.changePercentage || euHistory.changePercentage <= 0) return false;
+            break;
+        }
       }
       
       // Filter by minimum profit
@@ -1022,6 +1067,166 @@ export default function RecentScansPage() {
                         </Listbox>
                       </div>
 
+                      {/* New Product Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Product Age</label>
+                        <Listbox value={newProductFilter} onChange={setNewProductFilter}>
+                          <div className="relative">
+                            <Listbox.Button className="relative w-full cursor-default rounded-lg bg-white py-2 pl-3 pr-10 text-left shadow-sm border border-gray-300 focus:outline-none focus-visible:border-indigo-500 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-opacity-75 focus-visible:ring-offset-2 focus-visible:ring-offset-orange-300 sm:text-sm">
+                              <span className="block truncate text-sm">
+                                {newProductFilter === 'new' && '🆕 New Products'}
+                                {newProductFilter === 'existing' && '📦 Existing Products'}
+                                {newProductFilter === 'all' && '🔍 All Products'}
+                              </span>
+                              <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                                <ChevronDownIcon
+                                  className="h-5 w-5 text-gray-400"
+                                  aria-hidden="true"
+                                />
+                              </span>
+                            </Listbox.Button>
+                            <Transition
+                              as={Fragment}
+                              leave="transition ease-in duration-100"
+                              leaveFrom="opacity-100"
+                              leaveTo="opacity-0"
+                            >
+                              <Listbox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm z-50">
+                                <Listbox.Option
+                                  value="new"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    🆕 New Products Only
+                                  </span>
+                                </Listbox.Option>
+                                <Listbox.Option
+                                  value="existing"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    📦 Existing Products Only
+                                  </span>
+                                </Listbox.Option>
+                                <Listbox.Option
+                                  value="all"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    🔍 All Products
+                                  </span>
+                                </Listbox.Option>
+                              </Listbox.Options>
+                            </Transition>
+                          </div>
+                        </Listbox>
+                      </div>
+
+                      {/* Price Change Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Price Changes</label>
+                        <Listbox value={priceChangeFilter} onChange={setPriceChangeFilter}>
+                          <div className="relative">
+                            <Listbox.Button className="relative w-full cursor-default rounded-lg bg-white py-2 pl-3 pr-10 text-left shadow-sm border border-gray-300 focus:outline-none focus-visible:border-indigo-500 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-opacity-75 focus-visible:ring-offset-2 focus-visible:ring-offset-orange-300 sm:text-sm">
+                              <span className="block truncate text-sm">
+                                {priceChangeFilter === 'price-increased' && '📈 Price Increased'}
+                                {priceChangeFilter === 'price-decreased' && '📉 Price Decreased'}
+                                {priceChangeFilter === 'profit-improved' && '💰 Profit Improved'}
+                                {priceChangeFilter === 'profit-worsened' && '📊 Profit Worsened'}
+                                {priceChangeFilter === 'all' && '📋 All Changes'}
+                              </span>
+                              <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                                <ChevronDownIcon
+                                  className="h-5 w-5 text-gray-400"
+                                  aria-hidden="true"
+                                />
+                              </span>
+                            </Listbox.Button>
+                            <Transition
+                              as={Fragment}
+                              leave="transition ease-in duration-100"
+                              leaveFrom="opacity-100"
+                              leaveTo="opacity-0"
+                            >
+                              <Listbox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm z-50">
+                                <Listbox.Option
+                                  value="price-increased"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    📈 UK Price Increased
+                                  </span>
+                                </Listbox.Option>
+                                <Listbox.Option
+                                  value="price-decreased"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    📉 UK Price Decreased
+                                  </span>
+                                </Listbox.Option>
+                                <Listbox.Option
+                                  value="profit-improved"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    💰 EU Source Price Decreased
+                                  </span>
+                                </Listbox.Option>
+                                <Listbox.Option
+                                  value="profit-worsened"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    📊 EU Source Price Increased
+                                  </span>
+                                </Listbox.Option>
+                                <Listbox.Option
+                                  value="all"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    📋 Show All
+                                  </span>
+                                </Listbox.Option>
+                              </Listbox.Options>
+                            </Transition>
+                          </div>
+                        </Listbox>
+                      </div>
+
                       {/* Sort By */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Sort by</label>
@@ -1135,6 +1340,8 @@ export default function RecentScansPage() {
                           setMinSalesPerMonth(0)
                           setSelectedMarketplace('all')
                           setDealFilter('profitable')
+                          setNewProductFilter('all')
+                          setPriceChangeFilter('all')
                           setSortBy('profit')
                           setSortOrder('desc')
                         }}
@@ -1189,7 +1396,14 @@ export default function RecentScansPage() {
                               </div>
                             
                               <div className="flex-1">
-                                <h3 className="font-semibold text-gray-900 text-lg line-clamp-2 mb-2">{opp.productName}</h3>
+                                <div className="flex items-start gap-2 mb-2">
+                                  <h3 className="font-semibold text-gray-900 text-lg line-clamp-2 flex-1">{opp.productName}</h3>
+                                  {opp.isNewProduct && (
+                                    <span className="px-2 py-1 bg-green-100 text-green-700 rounded-lg text-xs font-medium whitespace-nowrap">
+                                      🆕 NEW
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="flex items-center gap-4 text-sm text-gray-500">
                                   <span>{opp.asin}</span>
                                   <StorefrontDisplay storefronts={opp.storefronts} />

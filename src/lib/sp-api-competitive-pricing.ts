@@ -508,6 +508,12 @@ export class SPAPICompetitivePricingClient {
       Asins: asins.join(',')
     };
     
+    // Add CustomerType parameter if specified (for B2B pricing)
+    if (customerType) {
+      queryParams.CustomerType = customerType;
+      console.log(`Fetching ${customerType} pricing for ${asins.length} ASINs`);
+    }
+    
     try {
       const response = await this.makeRequest(
         'GET',

@@ -66,10 +66,80 @@ export async function GET(
         best_profit,
         best_roi,
         profit_category,
-        all_marketplace_prices
+        all_marketplace_prices,
+        keepa_sales_data,
+        keepa_graph_url
       `)
       .eq('scan_id', scanId)
       .order('best_roi', { ascending: false });
+
+    // Fetch price history for the opportunities
+    let opportunitiesWithPriceHistory = opportunities || [];
+    if (opportunities && opportunities.length > 0) {
+      const asins = opportunities.map((opp: any) => opp.asin);
+      
+      // Get UK price history
+      const { data: ukPriceHistory } = await supabase
+        .from('asin_price_history')
+        .select('asin, old_price, new_price, price_change_amount, price_change_percentage, is_first_check, change_detected_at')
+        .in('asin', asins)
+        .eq('marketplace', 'UK')
+        .eq('scan_id', scanId);
+      
+      // Get EU price history for best marketplace
+      const { data: euPriceHistory } = await supabase
+        .from('asin_price_history')
+        .select('asin, marketplace, old_price, new_price, price_change_amount, price_change_percentage, is_first_check, change_detected_at')
+        .in('asin', asins)
+        .neq('marketplace', 'UK')
+        .eq('scan_id', scanId);
+      
+      // Also get product changes data for new/old product information
+      const { data: productChanges } = await supabase
+        .from('products_with_changes')
+        .select('asin, previous_price, price, price_change_percentage, first_seen_date, last_checked')
+        .in('asin', asins);
+      
+      // Merge price history data with opportunities
+      opportunitiesWithPriceHistory = opportunities.map((opp: any) => {
+        const ukHistory = ukPriceHistory?.find((h: any) => h.asin === opp.asin);
+        const euHistory = euPriceHistory?.find((h: any) => h.asin === opp.asin && h.marketplace === opp.best_source_marketplace);
+        const productChange = productChanges?.find((p: any) => p.asin === opp.asin);
+        
+        const priceHistory: any = {};
+        
+        if (ukHistory) {
+          priceHistory.uk = {
+            oldPrice: ukHistory.old_price,
+            newPrice: ukHistory.new_price,
+            changeAmount: ukHistory.price_change_amount,
+            changePercentage: ukHistory.price_change_percentage,
+            isFirstCheck: ukHistory.is_first_check,
+            lastChecked: ukHistory.change_detected_at
+          };
+        }
+        
+        if (euHistory) {
+          priceHistory.bestEu = {
+            oldPrice: euHistory.old_price,
+            newPrice: euHistory.new_price,
+            changeAmount: euHistory.price_change_amount,
+            changePercentage: euHistory.price_change_percentage,
+            isFirstCheck: euHistory.is_first_check,
+            lastChecked: euHistory.change_detected_at,
+            marketplace: euHistory.marketplace
+          };
+        }
+        
+        return {
+          ...opp,
+          priceHistory: Object.keys(priceHistory).length > 0 ? priceHistory : undefined,
+          isNewProduct: productChange?.first_seen_date ? 
+            new Date(productChange.first_seen_date).getTime() > Date.now() - (7 * 24 * 60 * 60 * 1000) : // New if seen within last 7 days
+            false
+        };
+      });
+    }
 
     if (oppsError) {
       console.error('Error fetching opportunities:', oppsError);
@@ -107,7 +177,7 @@ export async function GET(
         last_updated: scan.last_updated,
         metadata: scan.metadata
       },
-      opportunities: opportunities || [],
+      opportunities: opportunitiesWithPriceHistory,
       estimatedTimeRemaining
     };
 

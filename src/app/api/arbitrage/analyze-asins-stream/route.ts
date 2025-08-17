@@ -27,16 +27,16 @@ const EUR_TO_GBP_RATE = 0.86;
 const RATE_LIMITS = {
   COMPETITIVE_PRICING: {
     requestsPerSecond: 0.5,
-    itemsPerRequest: 20,
-    minInterval: 2000  // 2 seconds between requests
+    itemsPerRequest: 20,  // SP-API has a hard limit of 20 ASINs per request
+    minInterval: 1500     // Reduced from 2000ms to 1500ms
   },
   PRODUCT_FEES: {
     requestsPerSecond: 1,
-    minInterval: 1000  // 1 second between requests
+    minInterval: 800      // Reduced from 1000ms to 800ms  
   },
   CATALOG: {
     requestsPerSecond: 2,
-    minInterval: 500   // 500ms between requests
+    minInterval: 400      // Reduced from 500ms to 400ms
   }
 };
 
@@ -57,9 +57,152 @@ class RateLimiter {
   }
 }
 
+// Helper function to get price history for ASINs
+async function getPriceHistory(supabase: any, userId: string, asins: string[]): Promise<Map<string, Map<string, any>>> {
+  const priceHistoryMap = new Map<string, Map<string, any>>();
+  
+  try {
+    const { data: latestPrices, error } = await supabase
+      .from('latest_asin_price_history')
+      .select('asin, marketplace, old_price, new_price, price_change_amount, price_change_percentage, change_detected_at, is_first_check')
+      .eq('user_id', userId)
+      .in('asin', asins);
+
+    if (!error && latestPrices) {
+      for (const price of latestPrices) {
+        if (!priceHistoryMap.has(price.asin)) {
+          priceHistoryMap.set(price.asin, new Map());
+        }
+        priceHistoryMap.get(price.asin)!.set(price.marketplace, price);
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching price history:', error);
+  }
+  
+  return priceHistoryMap;
+}
+
+// Helper function to calculate price changes and update history
+async function updatePriceHistory(
+  supabase: any, 
+  userId: string, 
+  scanId: string,
+  asin: string, 
+  productName: string,
+  ukPrice: number, 
+  bestEuPrice: number, 
+  bestEuMarketplace: string,
+  previousPrices: Map<string, any>
+): Promise<PriceHistory> {
+  const now = new Date().toISOString();
+  
+  // Get previous UK price
+  const prevUkPrice = previousPrices.get('UK');
+  const ukPriceHistory: PriceHistoryInfo = {
+    newPrice: ukPrice,
+    isFirstCheck: !prevUkPrice,
+    lastChecked: now
+  };
+  
+  if (prevUkPrice) {
+    ukPriceHistory.oldPrice = prevUkPrice.new_price;
+    ukPriceHistory.changeAmount = ukPrice - prevUkPrice.new_price;
+    ukPriceHistory.changePercentage = ((ukPrice - prevUkPrice.new_price) / prevUkPrice.new_price) * 100;
+  }
+  
+  // Get previous EU price for best marketplace
+  const prevEuPrice = previousPrices.get(bestEuMarketplace);
+  const euPriceHistory: PriceHistoryInfo & { marketplace: string } = {
+    marketplace: bestEuMarketplace,
+    newPrice: bestEuPrice,
+    isFirstCheck: !prevEuPrice,
+    lastChecked: now
+  };
+  
+  if (prevEuPrice) {
+    euPriceHistory.oldPrice = prevEuPrice.new_price;
+    euPriceHistory.changeAmount = bestEuPrice - prevEuPrice.new_price;
+    euPriceHistory.changePercentage = ((bestEuPrice - prevEuPrice.new_price) / prevEuPrice.new_price) * 100;
+  }
+  
+  // Insert/update price history records
+  const priceHistoryInserts = [];
+  
+  // UK price history
+  priceHistoryInserts.push({
+    user_id: userId,
+    asin,
+    marketplace: 'UK',
+    old_price: ukPriceHistory.oldPrice || null,
+    new_price: ukPrice,
+    old_price_currency: 'GBP',
+    new_price_currency: 'GBP',
+    price_change_amount: ukPriceHistory.changeAmount || null,
+    price_change_percentage: ukPriceHistory.changePercentage || null,
+    product_name: productName,
+    change_detected_at: now,
+    scan_id: scanId,
+    is_first_check: ukPriceHistory.isFirstCheck
+  });
+  
+  // EU price history
+  priceHistoryInserts.push({
+    user_id: userId,
+    asin,
+    marketplace: bestEuMarketplace,
+    old_price: euPriceHistory.oldPrice || null,
+    new_price: bestEuPrice,
+    old_price_currency: 'EUR',
+    new_price_currency: 'EUR',
+    price_change_amount: euPriceHistory.changeAmount || null,
+    price_change_percentage: euPriceHistory.changePercentage || null,
+    product_name: productName,
+    change_detected_at: now,
+    scan_id: scanId,
+    is_first_check: euPriceHistory.isFirstCheck
+  });
+  
+  try {
+    // Insert into asin_price_history
+    await supabase
+      .from('asin_price_history')
+      .insert(priceHistoryInserts);
+      
+    // Upsert into latest_asin_price_history
+    await supabase
+      .from('latest_asin_price_history')
+      .upsert(priceHistoryInserts, { 
+        onConflict: 'user_id,asin,marketplace',
+        ignoreDuplicates: false 
+      });
+  } catch (error) {
+    console.error('Error updating price history:', error);
+  }
+  
+  return {
+    uk: ukPriceHistory,
+    bestEu: euPriceHistory
+  };
+}
+
 interface StreamMessage {
   type: 'progress' | 'opportunity' | 'complete' | 'error';
   data: any;
+}
+
+interface PriceHistoryInfo {
+  oldPrice?: number;
+  newPrice: number;
+  changeAmount?: number | null;
+  changePercentage?: number | null;
+  isFirstCheck: boolean;
+  lastChecked?: string;
+}
+
+interface PriceHistory {
+  uk: PriceHistoryInfo;
+  bestEu: PriceHistoryInfo & { marketplace: string };
 }
 
 export async function POST(request: NextRequest) {
@@ -74,6 +217,7 @@ export async function POST(request: NextRequest) {
     }
     
     const asins = body.asins;
+    const includeKeepa = body.includeKeepa !== false; // Default to true for backward compatibility
 
     // Check required environment variables
     const envCheck = checkEnvVars({
@@ -154,7 +298,9 @@ export async function POST(request: NextRequest) {
               metadata: {
                 exchange_rate: EUR_TO_GBP_RATE,
                 marketplaces: Object.keys(MARKETPLACES),
-                asins_count: validASINs.length
+                asins_count: validASINs.length,
+                batch_size: RATE_LIMITS.COMPETITIVE_PRICING.itemsPerRequest,
+                include_keepa: includeKeepa
               }
             })
             .select()
@@ -187,14 +333,14 @@ export async function POST(request: NextRequest) {
           const feesClient = new SPAPIProductFeesClient(credentials, spApiConfig);
           const catalogClient = new SPAPICatalogClient(credentials, spApiConfig);
           
-          // Initialize Keepa service if API key is available
+          // Initialize Keepa service if API key is available and requested
           let keepaService: KeepaProductService | null = null;
           const keepaApiKey = process.env.KEEPA_API_KEY;
-          if (keepaApiKey) {
+          if (keepaApiKey && includeKeepa) {
             console.log('[KEEPA] API key found, initializing service for user:', user.id);
             keepaService = new KeepaProductService(keepaApiKey, user.id, 2); // UK domain
           } else {
-            console.log('[KEEPA] No API key found in environment');
+            console.log(includeKeepa ? '[KEEPA] No API key found in environment' : '[KEEPA] Disabled for faster processing');
           }
 
           // Initialize blacklist service
@@ -278,6 +424,9 @@ export async function POST(request: NextRequest) {
             });
             
             await updateScanProgress(batchProgress, progressMessage, totalProcessed);
+
+            // Fetch price history for this batch
+            const priceHistoryMap = await getPriceHistory(supabase, user.id, batchAsins);
 
             try {
               // Step 1: Fetch UK pricing for this batch
@@ -525,6 +674,23 @@ export async function POST(request: NextRequest) {
                         opportunitiesFound++;
                       }
 
+                      // Update price history and get change information
+                      const previousPrices = priceHistoryMap.get(asin) || new Map();
+                      const priceHistory = scanId ? await updatePriceHistory(
+                        supabase,
+                        user.id,
+                        scanId,
+                        asin,
+                        productName,
+                        ukPricing.price,
+                        bestOpportunity.sourcePrice,
+                        bestOpportunity.marketplace,
+                        previousPrices
+                      ) : {
+                        uk: { newPrice: ukPricing.price, isFirstCheck: true },
+                        bestEu: { marketplace: bestOpportunity.marketplace, newPrice: bestOpportunity.sourcePrice, isFirstCheck: true }
+                      };
+
                       // Save to database
                       if (scanId) {
                         await supabase
@@ -569,7 +735,8 @@ export async function POST(request: NextRequest) {
                         salesPerMonth,
                         euPrices: euPrices.sort((a, b) => b.roi - a.roi),
                         bestOpportunity,
-                        profitCategory
+                        profitCategory,
+                        priceHistory
                       };
 
                       sendMessage({ type: 'opportunity', data: opportunity });
