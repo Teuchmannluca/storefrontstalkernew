@@ -227,6 +227,8 @@ export class KeepaProductService {
           keepa_estimated_sales,
           keepa_buy_box_win_rate,
           keepa_competitor_count,
+          keepa_spm_data_source,
+          keepa_spm_confidence,
           keepa_last_updated
         `)
         .eq('asin', asin)
@@ -238,6 +240,20 @@ export class KeepaProductService {
       }
       
       // Convert database format to KeepaProductStats
+      // Use cached SPM data quality information
+      const salesDrops30d = data.keepa_sales_drops_30d || 0;
+      const salesDrops90d = data.keepa_sales_drops_90d || 0;
+      const estimatedSales = data.keepa_estimated_sales || 0;
+      
+      // Use stored data quality values or fall back to calculated ones
+      const spmDataSource = data.keepa_spm_data_source as 'none' | '30day' | '90day' || 
+                          (salesDrops90d > 0 && estimatedSales > 0 ? '90day' : 
+                           salesDrops30d > 0 && estimatedSales > 0 ? '30day' : 'none');
+      
+      const spmConfidence = data.keepa_spm_confidence as 'none' | 'low' | 'medium' | 'high' || 
+                          (spmDataSource === '90day' ? 'high' : 
+                           spmDataSource === '30day' ? 'medium' : 'none');
+      
       return {
         asin: data.asin,
         title: data.product_name || '',
@@ -245,9 +261,11 @@ export class KeepaProductService {
         mainImage: data.image_link || '',
         salesRank: data.current_sales_rank,
         salesRankCategory: data.category || null,
-        salesDrops30d: data.keepa_sales_drops_30d || 0,
-        salesDrops90d: data.keepa_sales_drops_90d || 0,
-        estimatedMonthlySales: data.keepa_estimated_sales || 0,
+        salesDrops30d: salesDrops30d,
+        salesDrops90d: salesDrops90d,
+        estimatedMonthlySales: estimatedSales > 0 ? estimatedSales : null,
+        spmDataSource,
+        spmConfidence,
         buyBoxWinRate: data.keepa_buy_box_win_rate,
         competitorCount: data.keepa_competitor_count || 0,
         currentPrice: null, // Not stored in cache
@@ -279,6 +297,8 @@ export class KeepaProductService {
         keepa_competitor_count: keepaData.competitorCount,
         keepa_graph_url: graphUrl,
         keepa_last_updated: new Date().toISOString(),
+        keepa_spm_data_source: keepaData.spmDataSource,
+        keepa_spm_confidence: keepaData.spmConfidence,
         sales_per_month: keepaData.estimatedMonthlySales, // Also update the main sales field
       };
       

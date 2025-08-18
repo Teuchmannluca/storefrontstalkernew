@@ -10,6 +10,72 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 5. Use the Supabase MCP server (`mcp__supabase__*`) for all database operations
 6. Always fetch updated documentation using Context7 MCP when working with external libraries
 
+
+
+Core Principles
+YOU MUST create a plan before making any major changes and ask for explicit user confirmation before continuing. You can only skip this step if the change is trivial.
+
+Don't just blindly follow my plan. Think as an independent engineer when I ask you to do any major work and suggest alternative plans if you have better suggestions.
+
+Environment & Constraints
+Development Environment Assumptions
+You can assume that a local dev instance of the supabase db is always running; you don't need to control its lifecycle
+You should never need to start the dev server unless you need explicit debugging. Assume the user is already running npm run dev
+Note that the Playwright tests automatically start up a dev server for testing and won't reuse an existing one. If you need to do testing, either make sure the server is running at port 3000 or start one yourself via "npm run dev"
+Restrictions
+YOU MUST NEVER run any supabase commands with --linked flag without asking for explicit permission
+You don't have the ability to interact with UI, so never run playwright using --debug unless you need explicit help from me
+Migration files should NEVER add or modify database entries unless it's required for backwards compatibility issues
+Available Tools
+You have access to the MCP tool to query db directly to verify changes; use that when appropriate
+You have the freedom to create temporary test scripts to verify changes (e.g., custom scripts to trigger API logic and then verify changes in db), but make sure to delete them after you've used them successfully unless you need the user to help you debug
+It's fine to create API routes for debugging and test purposes under api/test/ but ensure they are disabled in production
+Commands
+Development: npm run dev (site), npm run dev:email (email preview)
+Build: npm run build
+Lint/Format: npm run lint:fix (runs prettier . --fix, eslint --fix, and tsc)
+Tests:
+Unit/Integration: npm test or npx jest tests/<test_file> (specific test)
+E2E: npm run test:e2e or npx playwright test tests/<test_file> (specific test)
+Database: npm run db:migrate (apply migrations), npm run db:gentypes (update types)
+Code Standards
+Style
+Use TypeScript for all code; prefer interfaces over types
+Use functional components and declarative programming; avoid classes
+Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError)
+Structure: exported component, subcomponents, helpers, static content, types
+Prefer server components and minimize 'use client' directives
+Use server actions for data fetching and state management
+Always check and fix type errors before completing
+Naming & Organization
+Use lowercase with dashes for directories (e.g., components/auth-wizard)
+Favor named exports for components
+Use the "function" keyword for pure functions
+File Discipline
+Don't create internal readme files unnecessarily; they should only be required when the code logic is extremely complex
+ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required
+NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User
+Technology Guidelines
+Database & Supabase
+Use Supabase for auth and database queries
+Check database.types.ts before any database work
+Always use migrations for schema changes
+When generating and running migrations, use the supabase commands rather than creating names yourself
+Always use npx supabase command to create migration files
+Use createServerClient() (server) or createBrowserClient() (client)
+Enable Row Level Security on all tables
+During development you are allowed to change migration files that are newly created in the current commit but applying will require a npx supabase db reset to avoid bloating when iterating on migrations
+Testing
+Follow existing test patterns for the same type (unit, integration, e2e)
+For E2E tests, prefer locators in order: getByRole, getByLabel, getByPlaceholder
+Validate results directly rather than checking database state
+UI Components
+Always install shadcn components with npx shadcn@latest add <component_name>
+When adding new UI components always consider using shadcn first and install via npx shadcn@latest add <component_name>
+Development Workflow
+Version Control
+Do not include the co-authored with claude note in commit message
+
 ## Development Commands
 ```bash
 npm run dev              # Development server (localhost:3000)

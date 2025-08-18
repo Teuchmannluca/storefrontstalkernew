@@ -1,10 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import Sidebar from '@/components/Sidebar'
 import AddStorefrontModal from '@/components/AddStorefrontModal'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { FixedSizeList } from 'react-window'
 import { estimateMonthlySalesFromRank, formatSalesEstimate } from '@/lib/sales-estimator'
 import { type ProfitCategory, getProfitCategoryColor, getProfitCategoryBgColor, getProfitCategoryBadgeColor, getProfitCategoryLabel, getProfitCategoryIcon } from '@/lib/profit-categorizer'
 import { 
@@ -139,9 +141,21 @@ export default function RecentScansPage() {
   const [maxPrice, setMaxPrice] = useState<number>(0)
   const [minSalesPerMonth, setMinSalesPerMonth] = useState<number>(0)
   const [selectedMarketplace, setSelectedMarketplace] = useState<string>('all')
+
+  // Debounced versions for performance - only update filtering after user stops typing
+  const [debouncedMinProfit] = useDebouncedValue(minProfit, 300)
+  const [debouncedMinROI] = useDebouncedValue(minROI, 300)
+  const [debouncedMaxPrice] = useDebouncedValue(maxPrice, 300)
+  const [debouncedMinSalesPerMonth] = useDebouncedValue(minSalesPerMonth, 300)
+
+  // Performance: Limit initial render to reasonable amount
+  const INITIAL_RENDER_LIMIT = 100
+  const [renderLimit, setRenderLimit] = useState(INITIAL_RENDER_LIMIT)
+  const [displayLimit, setDisplayLimit] = useState<number>(100)
   const [dealFilter, setDealFilter] = useState<'profitable' | 'profitable-breakeven' | 'all'>('profitable')
   const [newProductFilter, setNewProductFilter] = useState<'new' | 'existing' | 'all'>('all')
   const [priceChangeFilter, setPriceChangeFilter] = useState<'price-increased' | 'price-decreased' | 'profit-improved' | 'profit-worsened' | 'all'>('all')
+  const [spmFilter, setSpmFilter] = useState<'all' | 'available' | 'n/a'>('all')
   
   // Delete functionality state
   const [deletingScanId, setDeletingScanId] = useState<string | null>(null)
@@ -656,8 +670,8 @@ export default function RecentScansPage() {
   const profitableScans = savedScans.filter((s: any) => s.status === 'completed' && s.opportunities_found > 0).length
   const totalOpportunities = savedScans.reduce((sum: any, s: any) => sum + (s.opportunities_found || 0), 0)
 
-  // Function to filter and sort opportunities
-  const getFilteredAndSortedOpportunities = () => {
+  // Function to filter and sort opportunities (memoized for performance)
+  const getFilteredAndSortedOpportunities = useCallback(() => {
     let filtered = opportunities.filter((opp: any) => {
       // Filter by deal type (profitable, break-even, or all)
       const profit = opp.bestOpportunity?.profit || 0;
@@ -709,21 +723,36 @@ export default function RecentScansPage() {
         }
       }
       
-      // Filter by minimum profit
-      if (minProfit > 0 && opp.bestOpportunity.profit < minProfit) return false
+      // Filter by minimum profit (use debounced value)
+      if (debouncedMinProfit > 0 && opp.bestOpportunity.profit < debouncedMinProfit) return false
       
-      // Filter by minimum ROI
-      if (minROI > 0 && opp.bestOpportunity.roi < minROI) return false
+      // Filter by minimum ROI (use debounced value)
+      if (debouncedMinROI > 0 && opp.bestOpportunity.roi < debouncedMinROI) return false
       
-      // Filter by maximum UK price
-      if (maxPrice > 0 && opp.targetPrice > maxPrice) return false
+      // Filter by maximum UK price (use debounced value)
+      if (debouncedMaxPrice > 0 && opp.targetPrice > debouncedMaxPrice) return false
       
-      // Filter by minimum sales per month
+      // Filter by minimum sales per month (use debounced value)
       const monthlySales = opp.keepaSalesData?.estimatedMonthlySales || opp.salesPerMonth || 0
-      if (minSalesPerMonth > 0 && monthlySales < minSalesPerMonth) return false
+      if (debouncedMinSalesPerMonth > 0 && monthlySales < debouncedMinSalesPerMonth) return false
       
       // Filter by source marketplace
       if (selectedMarketplace !== 'all' && opp.bestOpportunity.marketplace !== selectedMarketplace) return false
+      
+      // Filter by SPM availability
+      switch (spmFilter) {
+        case 'available':
+          const monthlySalesForSpm = opp.keepaSalesData?.estimatedMonthlySales || opp.salesPerMonth || 0;
+          if (monthlySalesForSpm === 0) return false;
+          break;
+        case 'n/a':
+          const monthlySalesForNa = opp.keepaSalesData?.estimatedMonthlySales || opp.salesPerMonth || 0;
+          if (monthlySalesForNa !== 0) return false;
+          break;
+        case 'all':
+          // Show all products
+          break;
+      }
       
       return true
     })
@@ -771,7 +800,37 @@ export default function RecentScansPage() {
     })
 
     return filtered
-  }
+  }, [
+    opportunities, dealFilter, newProductFilter, priceChangeFilter, spmFilter,
+    debouncedMinProfit, debouncedMinROI, debouncedMaxPrice, debouncedMinSalesPerMonth,
+    selectedMarketplace, sortBy, sortOrder
+  ])
+
+  // Memoized filtered and sorted opportunities for maximum performance
+  const filteredAndSortedOpportunities = useMemo(() => {
+    return getFilteredAndSortedOpportunities()
+  }, [getFilteredAndSortedOpportunities])
+
+  // Performance: Only render visible opportunities to prevent UI freezing
+  const visibleOpportunities = useMemo(() => {
+    const effectiveLimit = Math.min(renderLimit, displayLimit)
+    return filteredAndSortedOpportunities.slice(0, effectiveLimit)
+  }, [filteredAndSortedOpportunities, renderLimit, displayLimit])
+
+  const hasMoreItems = filteredAndSortedOpportunities.length > Math.min(renderLimit, displayLimit)
+
+  const loadMoreItems = useCallback(() => {
+    setRenderLimit(prev => prev + INITIAL_RENDER_LIMIT)
+  }, [INITIAL_RENDER_LIMIT])
+
+  // Reset render limit when filters change
+  useEffect(() => {
+    setRenderLimit(Math.max(INITIAL_RENDER_LIMIT, displayLimit))
+  }, [
+    debouncedMinProfit, debouncedMinROI, debouncedMaxPrice, debouncedMinSalesPerMonth,
+    dealFilter, newProductFilter, priceChangeFilter, spmFilter, selectedMarketplace, sortBy, sortOrder,
+    displayLimit, INITIAL_RENDER_LIMIT
+  ])
 
   if (loading) {
     return (
@@ -922,7 +981,7 @@ export default function RecentScansPage() {
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-lg font-semibold text-gray-900">
-                          {getFilteredAndSortedOpportunities().length} Arbitrage Opportunities
+                          {filteredAndSortedOpportunities.length} Arbitrage Opportunities
                         </h3>
                         <p className="text-sm text-gray-600">
                           Profitable deals found in this scan
@@ -1257,6 +1316,22 @@ export default function RecentScansPage() {
                         </select>
                       </div>
 
+                      {/* Display Limit */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Show Results</label>
+                        <select
+                          value={displayLimit}
+                          onChange={(e) => setDisplayLimit(Number(e.target.value))}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        >
+                          <option value={50}>50 results</option>
+                          <option value={100}>100 results</option>
+                          <option value={200}>200 results</option>
+                          <option value={500}>500 results</option>
+                          <option value={1000}>1000 results</option>
+                        </select>
+                      </div>
+
                       {/* Min Profit Filter */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Min Profit (£)</label>
@@ -1328,6 +1403,73 @@ export default function RecentScansPage() {
                           <option value="ES">Spain</option>
                         </select>
                       </div>
+
+                      {/* SPM Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">SPM Data</label>
+                        <Listbox value={spmFilter} onChange={setSpmFilter}>
+                          <div className="relative">
+                            <Listbox.Button className="relative w-full cursor-default rounded-lg bg-white py-2 pl-3 pr-10 text-left shadow-sm border border-gray-300 focus:outline-none focus-visible:border-indigo-500 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-opacity-75 focus-visible:ring-offset-2 focus-visible:ring-offset-orange-300 sm:text-sm">
+                              <span className="block truncate text-sm">
+                                {spmFilter === 'all' && '📊 All Products'}
+                                {spmFilter === 'available' && '📈 With SPM Data'}
+                                {spmFilter === 'n/a' && '❓ N/A SPM Data'}
+                              </span>
+                              <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                                <ChevronDownIcon
+                                  className="h-5 w-5 text-gray-400"
+                                  aria-hidden="true"
+                                />
+                              </span>
+                            </Listbox.Button>
+                            <Transition
+                              as={Fragment}
+                              leave="transition ease-in duration-100"
+                              leaveFrom="opacity-100"
+                              leaveTo="opacity-0"
+                            >
+                              <Listbox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm z-50">
+                                <Listbox.Option
+                                  value="all"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    📊 Show All Products
+                                  </span>
+                                </Listbox.Option>
+                                <Listbox.Option
+                                  value="available"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    📈 Products With SPM Data
+                                  </span>
+                                </Listbox.Option>
+                                <Listbox.Option
+                                  value="n/a"
+                                  className={({ active }) =>
+                                    `relative cursor-default select-none py-2 pl-4 pr-4 ${
+                                      active ? 'bg-indigo-100 text-indigo-900' : 'text-gray-900'
+                                    }`
+                                  }
+                                >
+                                  <span className="block truncate font-normal">
+                                    ❓ Products With N/A SPM Data
+                                  </span>
+                                </Listbox.Option>
+                              </Listbox.Options>
+                            </Transition>
+                          </div>
+                        </Listbox>
+                      </div>
                     </div>
 
                     {/* Clear Filters Button */}
@@ -1342,8 +1484,11 @@ export default function RecentScansPage() {
                           setDealFilter('profitable')
                           setNewProductFilter('all')
                           setPriceChangeFilter('all')
+                          setSpmFilter('all')
+                          setDisplayLimit(100)
                           setSortBy('profit')
                           setSortOrder('desc')
+                          setRenderLimit(INITIAL_RENDER_LIMIT) // Reset render limit for performance
                         }}
                         className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                       >
@@ -1352,8 +1497,32 @@ export default function RecentScansPage() {
                     </div>
                   </div>
 
+                  {/* Results Counter */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-blue-800">
+                        <span className="font-medium">
+                          Showing {visibleOpportunities.length} of {filteredAndSortedOpportunities.length} results
+                        </span>
+                        {filteredAndSortedOpportunities.length < opportunities.length && (
+                          <span className="text-blue-600 ml-2">
+                            (filtered from {opportunities.length} total opportunities)
+                          </span>
+                        )}
+                      </div>
+                      {hasMoreItems && (
+                        <button
+                          onClick={loadMoreItems}
+                          className="px-3 py-1 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                        >
+                          Load More
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Opportunities List */}
-                  {getFilteredAndSortedOpportunities().map((opp: any, index: any) => {
+                  {visibleOpportunities.map((opp: any, index: any) => {
                     const isProfitable = opp.bestOpportunity?.profit > 0;
                     
                     return (
@@ -1408,6 +1577,69 @@ export default function RecentScansPage() {
                                   <span>{opp.asin}</span>
                                   <StorefrontDisplay storefronts={opp.storefronts} />
                                 </div>
+                                
+                                {/* Price History Info - Prominent Display */}
+                                {opp.priceHistory && (
+                                  <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                                    <h4 className="text-sm font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11.707 4.707a1 1 0 00-1.414-1.414L10 9.586 8.707 8.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                      </svg>
+                                      Price Changes Detected
+                                    </h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                      {/* UK Price Change */}
+                                      {opp.priceHistory.uk && !opp.priceHistory.uk.isFirstCheck && opp.priceHistory.uk.oldPrice && (
+                                        <div className="flex items-center justify-between p-2 bg-white rounded border">
+                                          <div>
+                                            <span className="text-gray-600 text-xs">🇬🇧 UK Price</span>
+                                            <div className="font-medium">
+                                              <span className="line-through text-gray-500">£{opp.priceHistory.uk.oldPrice.toFixed(2)}</span>
+                                              <span className="mx-2">→</span>
+                                              <span className="text-gray-900">£{opp.priceHistory.uk.newPrice.toFixed(2)}</span>
+                                            </div>
+                                          </div>
+                                          {opp.priceHistory.uk.changePercentage !== null && (
+                                            <div className={`px-2 py-1 rounded text-xs font-bold ${
+                                              opp.priceHistory.uk.changePercentage > 0 
+                                                ? 'bg-red-100 text-red-700' 
+                                                : 'bg-green-100 text-green-700'
+                                            }`}>
+                                              {opp.priceHistory.uk.changePercentage > 0 ? '↑' : '↓'}
+                                              {Math.abs(opp.priceHistory.uk.changePercentage).toFixed(1)}%
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                      
+                                      {/* EU Price Change */}
+                                      {opp.priceHistory.bestEu && !opp.priceHistory.bestEu.isFirstCheck && opp.priceHistory.bestEu.oldPrice && (
+                                        <div className="flex items-center justify-between p-2 bg-white rounded border">
+                                          <div>
+                                            <span className="text-gray-600 text-xs">
+                                              {getCountryFlag(opp.priceHistory.bestEu.marketplace)} {opp.priceHistory.bestEu.marketplace} Price
+                                            </span>
+                                            <div className="font-medium">
+                                              <span className="line-through text-gray-500">€{opp.priceHistory.bestEu.oldPrice.toFixed(2)}</span>
+                                              <span className="mx-2">→</span>
+                                              <span className="text-gray-900">€{opp.priceHistory.bestEu.newPrice.toFixed(2)}</span>
+                                            </div>
+                                          </div>
+                                          {opp.priceHistory.bestEu.changePercentage !== null && (
+                                            <div className={`px-2 py-1 rounded text-xs font-bold ${
+                                              opp.priceHistory.bestEu.changePercentage > 0 
+                                                ? 'bg-red-100 text-red-700' 
+                                                : 'bg-green-100 text-green-700'
+                                            }`}>
+                                              {opp.priceHistory.bestEu.changePercentage > 0 ? '↑' : '↓'}
+                                              {Math.abs(opp.priceHistory.bestEu.changePercentage).toFixed(1)}%
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
                                 
                                 {/* Sales and Rank Info */}
                                 <div className="flex items-center gap-4 mt-2 mb-2">
@@ -1517,7 +1749,21 @@ export default function RecentScansPage() {
 
                             {/* Right: Profit Info */}
                             <div className="text-right">
-                              <p className="text-sm text-gray-500 mb-1">NET PROFIT (INC-VAT)</p>
+                              <div className="flex items-center justify-end gap-2 mb-1">
+                                <p className="text-sm text-gray-500">NET PROFIT (INC-VAT)</p>
+                                {/* Price Change Indicator */}
+                                {opp.priceHistory && (
+                                  (opp.priceHistory.uk && !opp.priceHistory.uk.isFirstCheck && opp.priceHistory.uk.oldPrice) ||
+                                  (opp.priceHistory.bestEu && !opp.priceHistory.bestEu.isFirstCheck && opp.priceHistory.bestEu.oldPrice)
+                                ) && (
+                                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11.707 4.707a1 1 0 00-1.414-1.414L10 9.586 8.707 8.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                    </svg>
+                                    Price Changed
+                                  </span>
+                                )}
+                              </div>
                               <p className={`text-4xl font-bold ${getProfitCategoryColor(opp.profitCategory || 'profitable')}`}>
                                 £{(opp.bestOpportunity?.profit || 0).toFixed(2)}
                               </p>
@@ -1799,7 +2045,7 @@ export default function RecentScansPage() {
                                 {/* Add to List Button */}
                                 <button
                                   onClick={() => {
-                                    const profitableOpps = getFilteredAndSortedOpportunities().filter((o: any) => o.bestOpportunity?.profit > 0)
+                                    const profitableOpps = filteredAndSortedOpportunities.filter((o: any) => o.bestOpportunity?.profit > 0)
                                     if (profitableOpps.length === 0) return
                                     
                                     // Set the current opportunity as selected and open modal
@@ -2155,6 +2401,18 @@ export default function RecentScansPage() {
                       </div>
                     );
                   })}
+
+                  {/* Load More Button for Performance */}
+                  {hasMoreItems && (
+                    <div className="mt-8 text-center">
+                      <button
+                        onClick={loadMoreItems}
+                        className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                      >
+                        Load More ({filteredAndSortedOpportunities.length - renderLimit} remaining)
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </>

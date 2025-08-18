@@ -45,7 +45,9 @@ interface PriceHistoryInfo {
 interface KeepaData {
   salesDrops30d: number
   salesDrops90d: number
-  estimatedMonthlySales: number
+  estimatedMonthlySales: number | null
+  spmDataSource: 'none' | '30day' | '90day'
+  spmConfidence: 'none' | 'low' | 'medium' | 'high'
   buyBoxWinRate: number | null
   competitorCount: number
   currentPrice: number | null
@@ -82,7 +84,7 @@ interface ArbitrageOpportunity {
 }
 
 type SortOption = 'profit' | 'roi' | 'margin' | 'price'
-type ProfitFilter = 'profitable' | 'include-breakeven' | 'all' | 'new-deals'
+type ProfitFilter = 'profitable' | 'include-breakeven' | 'all' | 'new-deals' | 'hide-zero-spm' | 'only-with-spm'
 
 export default function ASINCheckerPage() {
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([])
@@ -857,6 +859,8 @@ export default function ASINCheckerPage() {
                         <option value="profitable">Profitable Only</option>
                         <option value="new-deals">New Profitable Deals</option>
                         <option value="include-breakeven">Include Break-Even</option>
+                        <option value="hide-zero-spm">Hide Zero SPM</option>
+                        <option value="only-with-spm">Only With SPM Data</option>
                         <option value="all">Show All Deals</option>
                       </select>
                     </div>
@@ -956,6 +960,13 @@ export default function ASINCheckerPage() {
                              (opp.priceHistory.uk.changePercentage !== null || opp.priceHistory.bestEu.changePercentage !== null);
                     case 'include-breakeven':
                       return profitCategory === 'profitable' || profitCategory === 'breakeven';
+                    case 'hide-zero-spm':
+                      // Exclude products with 0 or null SPM from any source
+                      return (opp.salesPerMonth && opp.salesPerMonth > 0) || 
+                             (opp.keepaSalesData?.estimatedMonthlySales && opp.keepaSalesData.estimatedMonthlySales > 0);
+                    case 'only-with-spm':
+                      // Show only products with valid Keepa SPM data
+                      return opp.keepaSalesData?.estimatedMonthlySales && opp.keepaSalesData.estimatedMonthlySales > 0;
                     case 'all':
                       return true;
                     default:
@@ -973,6 +984,10 @@ export default function ASINCheckerPage() {
                             ? 'No new profitable deals found yet'
                           : profitFilter === 'include-breakeven'
                             ? 'No profitable or break-even opportunities found yet'
+                          : profitFilter === 'hide-zero-spm'
+                            ? 'No opportunities with SPM data found yet'
+                          : profitFilter === 'only-with-spm'
+                            ? 'No opportunities with Keepa SPM data found yet'
                             : 'No opportunities found yet'}
                       </p>
                       <p className="text-yellow-600 text-sm mt-1">
@@ -1033,9 +1048,46 @@ export default function ASINCheckerPage() {
                               <span>BSR: #{opp.ukSalesRank.toLocaleString()}</span>
                             )}
                             {(opp.keepaSalesData?.estimatedMonthlySales && opp.keepaSalesData.estimatedMonthlySales > 0) ? (
-                              <span className="text-green-600 font-medium">Keepa Sales: {opp.keepaSalesData.estimatedMonthlySales}/mo</span>
-                            ) : (opp.salesPerMonth !== undefined && opp.salesPerMonth > 0) && (
-                              <span>Est. Sales: ~{opp.salesPerMonth}/mo</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-green-600 font-medium">
+                                  Keepa Sales: {opp.keepaSalesData.estimatedMonthlySales}/mo
+                                </span>
+                                {/* SPM Data Quality Badge */}
+                                {opp.keepaSalesData.spmDataSource && (
+                                  <span 
+                                    className={`px-2 py-1 text-xs rounded-full font-medium ${
+                                      opp.keepaSalesData.spmDataSource === '90day' && opp.keepaSalesData.spmConfidence === 'high'
+                                        ? 'bg-green-100 text-green-800' 
+                                        : opp.keepaSalesData.spmDataSource === '30day' && opp.keepaSalesData.spmConfidence === 'medium'
+                                        ? 'bg-yellow-100 text-yellow-800'
+                                        : 'bg-gray-100 text-gray-800'
+                                    }`}
+                                    title={`SPM calculated from ${opp.keepaSalesData.spmDataSource === '90day' ? '90-day' : '30-day'} sales data (${opp.keepaSalesData.spmConfidence} confidence)`}
+                                  >
+                                    {opp.keepaSalesData.spmDataSource === '90day' ? '90d' : '30d'}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (opp.salesPerMonth !== undefined && opp.salesPerMonth > 0) ? (
+                              <div className="flex items-center gap-2">
+                                <span>Est. Sales: ~{opp.salesPerMonth}/mo</span>
+                                <span 
+                                  className="px-2 py-1 text-xs rounded-full font-medium bg-blue-100 text-blue-800"
+                                  title="Estimated from BSR using sales estimator (lower confidence)"
+                                >
+                                  BSR Est.
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="text-gray-500">SPM: No data</span>
+                                <span 
+                                  className="px-2 py-1 text-xs rounded-full font-medium bg-red-100 text-red-800"
+                                  title="No sales per month data available"
+                                >
+                                  No Data
+                                </span>
+                              </div>
                             )}
                             {opp.keepaSalesData?.competitorCount && (
                               <span>Competitors: {opp.keepaSalesData.competitorCount}</span>

@@ -28,7 +28,9 @@ export interface KeepaProductStats {
   salesRankCategory: string | null;
   salesDrops30d: number;
   salesDrops90d: number;
-  estimatedMonthlySales: number;
+  estimatedMonthlySales: number | null;
+  spmDataSource: 'none' | '30day' | '90day';
+  spmConfidence: 'none' | 'low' | 'medium' | 'high';
   buyBoxWinRate: number | null;
   competitorCount: number;
   currentPrice: number | null;
@@ -231,8 +233,27 @@ export class KeepaAPI {
     const salesDrops30d = stats.salesRankDrops30 || 0;
     const salesDrops90d = stats.salesRankDrops90 || 0;
     
-    // Estimate monthly sales (90-day average)
-    const estimatedMonthlySales = Math.round(salesDrops90d / 3);
+    // Enhanced SPM calculation with fallback logic
+    let estimatedMonthlySales: number | null = null;
+    let spmDataSource: 'none' | '30day' | '90day' = 'none';
+    let spmConfidence: 'none' | 'low' | 'medium' | 'high' = 'none';
+
+    if (salesDrops90d > 0) {
+      // Prefer 90-day data as it's more accurate
+      estimatedMonthlySales = Math.round(salesDrops90d / 3);
+      spmDataSource = '90day';
+      spmConfidence = 'high';
+      console.log(`[KEEPA] ASIN ${product.asin || 'unknown'}: Using 90-day data (${salesDrops90d} drops → ${estimatedMonthlySales} SPM)`);
+    } else if (salesDrops30d > 0) {
+      // Fallback to 30-day data as monthly estimate
+      estimatedMonthlySales = salesDrops30d;
+      spmDataSource = '30day';
+      spmConfidence = 'medium';
+      console.log(`[KEEPA] ASIN ${product.asin || 'unknown'}: Fallback to 30-day data (${salesDrops30d} drops → ${estimatedMonthlySales} SPM)`);
+    } else {
+      // No sales data available
+      console.log(`[KEEPA] ASIN ${product.asin || 'unknown'}: No SPM data available (90d: ${salesDrops90d}, 30d: ${salesDrops30d})`);
+    }
     
     // Extract Buy Box win rate
     let buyBoxWinRate = null;
@@ -295,6 +316,8 @@ export class KeepaAPI {
       salesDrops30d,
       salesDrops90d,
       estimatedMonthlySales,
+      spmDataSource,
+      spmConfidence,
       buyBoxWinRate,
       competitorCount,
       currentPrice,

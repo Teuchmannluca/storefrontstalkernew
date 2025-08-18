@@ -583,8 +583,13 @@ export async function POST(request: NextRequest) {
                         });
                         
                         // Use Keepa's more accurate sales estimate if available
-                        if (keepaSalesData.estimatedMonthlySales > 0) {
+                        if (keepaSalesData.estimatedMonthlySales && keepaSalesData.estimatedMonthlySales > 0) {
                           salesPerMonth = keepaSalesData.estimatedMonthlySales;
+                          console.log(`[SPM] ASIN ${asin}: Updated SPM from Keepa data (${keepaSalesData.estimatedMonthlySales}/mo, source: ${keepaSalesData.spmDataSource}, confidence: ${keepaSalesData.spmConfidence})`);
+                        } else if (salesPerMonth > 0) {
+                          console.log(`[SPM] ASIN ${asin}: Using BSR estimate (${salesPerMonth}/mo from rank ${salesRank})`);
+                        } else {
+                          console.log(`[SPM] ASIN ${asin}: No SPM data available (Keepa: ${keepaSalesData.estimatedMonthlySales || 'null'}, BSR est: ${salesPerMonth})`);
                         }
                         
                         // Update product name if not found from catalog
@@ -715,7 +720,9 @@ export async function POST(request: NextRequest) {
                             profit_category: profitCategory,
                             all_marketplace_prices: { euPrices },
                             keepa_sales_data: keepaSalesData,
-                            keepa_graph_url: keepaGraphUrl
+                            keepa_graph_url: keepaGraphUrl,
+                            spm_data_source: keepaSalesData?.spmDataSource || (salesPerMonth > 0 ? 'estimate' : 'none'),
+                            spm_confidence: keepaSalesData?.spmConfidence || (salesPerMonth > 0 ? 'low' : 'none')
                           });
                       }
 
