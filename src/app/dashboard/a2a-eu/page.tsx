@@ -36,6 +36,7 @@ import { Listbox, Transition } from '@headlessui/react'
 import { useBlacklist } from '@/hooks/useBlacklist'
 import SourcingListModal from '@/components/SourcingListModal'
 import AddToASINListModal from '@/components/AddToASINListModal'
+import SellerAmpModal from '@/components/SellerAmpModal'
 import { StorefrontDisplay, formatStorefrontsText } from '@/lib/storefront-formatter'
 
 // Exchange rate constant
@@ -120,6 +121,7 @@ function A2AEUPageContent() {
   const [viewingSavedScan, setViewingSavedScan] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<SortOption>('profit')
   const [selectedDeals, setSelectedDeals] = useState<Set<string>>(new Set())
+  const [spmFilter, setSpmFilter] = useState<'all' | 'available' | 'n/a'>('all')
   
   // Sourcing list modal state
   const [showSourcingListModal, setShowSourcingListModal] = useState(false)
@@ -127,16 +129,36 @@ function A2AEUPageContent() {
   // ASIN list modal state
   const [showASINListModal, setShowASINListModal] = useState(false)
 
+  // Batch SellerAmp modal state
+  const [showBatchSellerAmpModal, setShowBatchSellerAmpModal] = useState(false)
+  const [batchFetchingSPM, setBatchFetchingSPM] = useState(false)
+  const [batchProgress, setBatchProgress] = useState<{
+    processed: number;
+    total: number;
+    progress: number;
+    message: string;
+    successCount: number;
+    errorCount: number;
+    currentAsin?: string;
+  } | null>(null)
+
   // Blacklist functionality
   const { blacklistAsin, isLoading: isBlacklisting, error: blacklistError, success: blacklistSuccess, clearMessages } = useBlacklist()
   const [blacklistConfirm, setBlacklistConfirm] = useState<{ asin: string; productName: string } | null>(null)
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  // Filter opportunities based on deal filter setting
+  // Filter opportunities based on deal filter setting and SPM filter
   const getFilteredOpportunities = (opportunities: ArbitrageOpportunity[]) => {
     return opportunities.filter(opp => {
       const profit = opp.bestOpportunity?.profit || 0;
+      
+      // Apply SPM filter
+      if (spmFilter !== 'all') {
+        const hasSPM = opp.salesPerMonth && opp.salesPerMonth > 0;
+        if (spmFilter === 'available' && !hasSPM) return false;
+        if (spmFilter === 'n/a' && hasSPM) return false;
+      }
       
       switch (dealFilter) {
         case 'profitable':
@@ -247,6 +269,141 @@ function A2AEUPageContent() {
   const handleBlacklistCancel = () => {
     setBlacklistConfirm(null)
     clearMessages()
+  }
+
+  // Batch SellerAmp SPM fetching handlers
+  const openBatchSellerAmpModal = () => {
+    const filteredOpportunities = getFilteredOpportunities(sortedOpportunities);
+    if (filteredOpportunities.length === 0) {
+      alert('No products found with missing SPM data');
+      return;
+    }
+    setShowBatchSellerAmpModal(true);
+  }
+
+  const handleBatchSellerAmpFetch = async (credentials: { username: string; password: string; rememberForSession: boolean }) => {
+    setBatchFetchingSPM(true);
+    setBatchProgress({
+      processed: 0,
+      total: 0,
+      progress: 0,
+      message: 'Preparing batch fetch...',
+      successCount: 0,
+      errorCount: 0
+    });
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('Authentication required');
+      }
+
+      // Get filtered opportunities (N/A SPM only)
+      const filteredOpportunities = getFilteredOpportunities(sortedOpportunities);
+      const asinsToFetch = filteredOpportunities.map(opp => ({
+        asin: opp.asin,
+        costPrice: opp.bestOpportunity?.sourcePriceGBP || 0,
+        salePrice: opp.targetPrice || 0
+      }));
+
+      setBatchProgress(prev => prev ? { ...prev, total: asinsToFetch.length } : null);
+
+      const response = await fetch('/api/selleramp/batch-fetch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          asins: asinsToFetch,
+          username: credentials.username,
+          password: credentials.password
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const message = JSON.parse(line.slice(6));
+              
+              switch (message.type) {
+                case 'progress':
+                  setBatchProgress({
+                    processed: message.data.processed,
+                    total: message.data.total,
+                    progress: message.data.progress,
+                    message: message.data.message,
+                    successCount: 0,
+                    errorCount: 0,
+                    currentAsin: message.data.currentAsin
+                  });
+                  break;
+                  
+                case 'success':
+                  setBatchProgress(prev => prev ? {
+                    ...prev,
+                    successCount: prev.successCount + 1
+                  } : null);
+                  break;
+                  
+                case 'error_item':
+                  setBatchProgress(prev => prev ? {
+                    ...prev,
+                    errorCount: prev.errorCount + 1
+                  } : null);
+                  break;
+                  
+                case 'complete':
+                  setBatchProgress({
+                    processed: message.data.processed,
+                    total: message.data.total,
+                    progress: 100,
+                    message: 'Batch processing completed!',
+                    successCount: message.data.successCount,
+                    errorCount: message.data.errorCount
+                  });
+                  
+                  // Refresh opportunities data
+                  setTimeout(() => {
+                    window.location.reload(); // Simple refresh for now
+                  }, 2000);
+                  break;
+                  
+                case 'error':
+                  throw new Error(message.data.error);
+              }
+            } catch (parseError) {
+              console.error('Error parsing message:', parseError);
+            }
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error('Batch SellerAmp fetch error:', error);
+      alert(`Failed to fetch SPM data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setBatchFetchingSPM(false);
+    }
   }
 
   const handleStorefrontToggle = (storefront: Storefront) => {
@@ -1442,6 +1599,94 @@ function A2AEUPageContent() {
                         </Transition>
                       </div>
                     </Listbox>
+
+                    {/* SPM Filter */}
+                    <Listbox value={spmFilter} onChange={setSpmFilter}>
+                      <div className="relative">
+                        <Listbox.Button className="relative w-full cursor-default rounded-lg bg-white py-2 pl-3 pr-10 text-left shadow-sm border border-gray-300 focus:outline-none focus-visible:border-indigo-500 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-opacity-75 focus-visible:ring-offset-2 focus-visible:ring-offset-orange-300 sm:text-sm">
+                          <span className="block truncate">
+                            {spmFilter === 'all' && '📊 All SPM Data'}
+                            {spmFilter === 'available' && '✅ Has SPM Data'}
+                            {spmFilter === 'n/a' && '❌ Missing SPM Data'}
+                          </span>
+                          <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                            <ChevronDownIcon
+                              className="h-5 w-5 text-gray-400"
+                              aria-hidden="true"
+                            />
+                          </span>
+                        </Listbox.Button>
+                        <Transition
+                          as={Fragment}
+                          enter="transition ease-out duration-100"
+                          enterFrom="transform opacity-0 scale-95"
+                          enterTo="transform opacity-100 scale-100"
+                          leave="transition ease-in duration-75"
+                          leaveFrom="transform opacity-100 scale-100"
+                          leaveTo="transform opacity-0 scale-95"
+                        >
+                          <Listbox.Options className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
+                            <Listbox.Option
+                              value="all"
+                              className={({ active }) =>
+                                `relative cursor-default select-none py-2 pl-10 pr-4 ${
+                                  active ? 'bg-amber-100 text-amber-900' : 'text-gray-900'
+                                }`
+                              }
+                            >
+                              {({ selected }) => (
+                                <>
+                                  <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>
+                                    📊 All SPM Data
+                                  </span>
+                                  <span className="block text-xs text-gray-500 mt-1">
+                                    Show all products regardless of SPM data
+                                  </span>
+                                </>
+                              )}
+                            </Listbox.Option>
+                            <Listbox.Option
+                              value="available"
+                              className={({ active }) =>
+                                `relative cursor-default select-none py-2 pl-10 pr-4 ${
+                                  active ? 'bg-amber-100 text-amber-900' : 'text-gray-900'
+                                }`
+                              }
+                            >
+                              {({ selected }) => (
+                                <>
+                                  <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>
+                                    ✅ Has SPM Data
+                                  </span>
+                                  <span className="block text-xs text-gray-500 mt-1">
+                                    Only show products with sales per month data
+                                  </span>
+                                </>
+                              )}
+                            </Listbox.Option>
+                            <Listbox.Option
+                              value="n/a"
+                              className={({ active }) =>
+                                `relative cursor-default select-none py-2 pl-10 pr-4 ${
+                                  active ? 'bg-amber-100 text-amber-900' : 'text-gray-900'
+                                }`
+                              }
+                            >
+                              {({ selected }) => (
+                                <>
+                                  <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>
+                                    ❌ Missing SPM Data
+                                  </span>
+                                  <span className="block text-xs text-gray-500 mt-1">
+                                    Only show products without SPM data (N/A)
+                                  </span>
+                                </>
+                              )}
+                            </Listbox.Option>
+                          </Listbox.Options>
+                        </Transition>
+                      </div>
+                    </Listbox>
                     
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-600">Sort by:</span>
@@ -1477,6 +1722,25 @@ function A2AEUPageContent() {
                         {selectedDeals.size > 0 && selectedDeals.size === sortedOpportunities.filter((opp: any) => opp.bestOpportunity && opp.bestOpportunity.profit > 0).length 
                           ? 'Deselect All' 
                           : 'Select All Profitable'}
+                      </button>
+                    )}
+
+                    {/* Bulk Fetch SPM Button - Only show when N/A filter is active */}
+                    {spmFilter === 'n/a' && getFilteredOpportunities(sortedOpportunities).length > 0 && (
+                      <button
+                        onClick={openBatchSellerAmpModal}
+                        disabled={batchFetchingSPM}
+                        className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors flex items-center gap-2 disabled:opacity-50"
+                        title="Fetch SPM data from SellerAmp for all N/A items"
+                      >
+                        {batchFetchingSPM ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        ) : (
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
+                          </svg>
+                        )}
+                        Fetch All SPM via SellerAmp ({getFilteredOpportunities(sortedOpportunities).length})
                       </button>
                     )}
                     
@@ -2301,6 +2565,71 @@ function A2AEUPageContent() {
             }, {})
         }
       />
+
+      {/* Batch SellerAmp Modal */}
+      <SellerAmpModal
+        isOpen={showBatchSellerAmpModal}
+        onClose={() => {
+          setShowBatchSellerAmpModal(false);
+          setBatchProgress(null);
+        }}
+        onSubmit={handleBatchSellerAmpFetch}
+        asin={`${getFilteredOpportunities(sortedOpportunities).length} ASINs`}
+        costPrice={0}
+        salePrice={0}
+        isLoading={batchFetchingSPM}
+        isBatchMode={true}
+      />
+
+      {/* Batch Progress Modal */}
+      {batchProgress && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full">
+            <div className="text-center">
+              <h3 className="text-lg font-semibold mb-4">Fetching SPM Data</h3>
+              
+              {/* Progress Bar */}
+              <div className="w-full bg-gray-200 rounded-full h-2 mb-4">
+                <div 
+                  className="bg-orange-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${batchProgress.progress}%` }}
+                ></div>
+              </div>
+              
+              {/* Progress Stats */}
+              <div className="flex justify-between text-sm text-gray-600 mb-4">
+                <span>{batchProgress.processed} / {batchProgress.total}</span>
+                <span>{batchProgress.progress.toFixed(0)}%</span>
+              </div>
+              
+              {/* Current Status */}
+              <p className="text-sm text-gray-700 mb-2">{batchProgress.message}</p>
+              {batchProgress.currentAsin && (
+                <p className="text-xs text-gray-500 mb-4">Processing: {batchProgress.currentAsin}</p>
+              )}
+              
+              {/* Success/Error Counts */}
+              <div className="flex justify-center gap-4 text-sm mb-4">
+                <span className="text-green-600">✅ {batchProgress.successCount} success</span>
+                <span className="text-red-600">❌ {batchProgress.errorCount} errors</span>
+              </div>
+              
+              {batchProgress.progress < 100 && (
+                <button
+                  onClick={() => {
+                    setBatchFetchingSPM(false);
+                    setBatchProgress(null);
+                    setShowBatchSellerAmpModal(false);
+                  }}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800 text-sm"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <AddStorefrontModal
         isOpen={showAddStorefrontModal}

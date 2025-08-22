@@ -29,6 +29,7 @@ import { Fragment } from 'react'
 import { Listbox, Transition } from '@headlessui/react'
 import { useBlacklist } from '@/hooks/useBlacklist'
 import SourcingListModal from '@/components/SourcingListModal'
+import SellerAmpModal from '@/components/SellerAmpModal'
 import { StorefrontDisplay, formatStorefrontsText } from '@/lib/storefront-formatter'
 
 interface SavedScan {
@@ -162,6 +163,28 @@ export default function RecentScansPage() {
   
   // Sourcing list modal state
   const [showSourcingListModal, setShowSourcingListModal] = useState(false)
+  
+  // SellerAmp modal state
+  const [showSellerAmpModal, setShowSellerAmpModal] = useState(false)
+  const [sellerAmpProduct, setSellerAmpProduct] = useState<{
+    asin: string
+    costPrice: number
+    salePrice: number
+  } | null>(null)
+  const [fetchingSPM, setFetchingSPM] = useState(false)
+
+  // Batch SellerAmp modal state
+  const [showBatchSellerAmpModal, setShowBatchSellerAmpModal] = useState(false)
+  const [batchFetchingSPM, setBatchFetchingSPM] = useState(false)
+  const [batchProgress, setBatchProgress] = useState<{
+    processed: number;
+    total: number;
+    progress: number;
+    message: string;
+    successCount: number;
+    errorCount: number;
+    currentAsin?: string;
+  } | null>(null)
   
   const router = useRouter()
 
@@ -514,6 +537,67 @@ export default function RecentScansPage() {
     document.body.removeChild(link)
   }
 
+  const exportASINsToCSV = () => {
+    if (!viewingScan || opportunities.length === 0) return
+    
+    // Create CSV headers for ASINs with key product data
+    const headers = [
+      'ASIN',
+      'Product Name',
+      'UK Price (£)',
+      'Best EU Price (£)',
+      'Profit (£)',
+      'ROI (%)',
+      'EU Marketplace',
+      'UK Sales Rank',
+      'Sales Per Month',
+      'Profit Category',
+      'Storefronts'
+    ]
+
+    // Convert opportunity data to CSV rows
+    const csvRows = opportunities.map((opp: ArbitrageOpportunity) => {
+      const bestOpp = opp.bestOpportunity
+      const storefrontsText = opp.storefronts ? opp.storefronts.map(sf => sf.name).join('; ') : ''
+      
+      return [
+        opp.asin,
+        opp.productName || opp.asin,
+        opp.ukLowestPrice ? opp.ukLowestPrice.toFixed(2) : 'N/A',
+        bestOpp ? bestOpp.sourcePriceGBP.toFixed(2) : 'N/A',
+        bestOpp ? bestOpp.profit.toFixed(2) : 'N/A',
+        bestOpp ? bestOpp.roi.toFixed(1) : 'N/A',
+        bestOpp ? bestOpp.marketplace : 'N/A',
+        opp.ukSalesRank || 'N/A',
+        opp.salesPerMonth || 'N/A',
+        opp.profitCategory || 'N/A',
+        storefrontsText
+      ]
+    })
+
+    // Combine headers and data
+    const csvContent = [headers, ...csvRows]
+      .map((row: any) => row.map((field: any) => {
+        // Escape fields that contain commas, quotes, or newlines
+        const fieldStr = String(field)
+        if (fieldStr.includes(',') || fieldStr.includes('"') || fieldStr.includes('\n')) {
+          return `"${fieldStr.replace(/"/g, '""')}"`
+        }
+        return fieldStr
+      }).join(',')).join('\n')
+
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    const scanTypeText = viewingScan.scan_type === 'asin_check' ? 'asin-check' : viewingScan.storefront_name?.toLowerCase().replace(/\s+/g, '-') || 'scan'
+    const timestamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '')
+    link.href = URL.createObjectURL(blob)
+    link.download = `asins-${scanTypeText}-${timestamp}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   const handleDeleteScan = async (scanId: string) => {
     try {
       setDeletingScanId(scanId)
@@ -669,6 +753,205 @@ export default function RecentScansPage() {
   const completedScans = savedScans.filter((s: any) => s.status === 'completed').length
   const profitableScans = savedScans.filter((s: any) => s.status === 'completed' && s.opportunities_found > 0).length
   const totalOpportunities = savedScans.reduce((sum: any, s: any) => sum + (s.opportunities_found || 0), 0)
+
+  // SellerAmp SPM fetching handlers
+  const openSellerAmpModal = (asin: string, costPrice: number, salePrice: number) => {
+    setSellerAmpProduct({ asin, costPrice, salePrice })
+    setShowSellerAmpModal(true)
+  }
+
+  const handleSellerAmpFetch = async (credentials: { username: string; password: string; rememberForSession: boolean }) => {
+    if (!sellerAmpProduct) return
+
+    setFetchingSPM(true)
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        throw new Error('Authentication required')
+      }
+
+      const response = await fetch('/api/selleramp/fetch-spm', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          asin: sellerAmpProduct.asin,
+          costPrice: sellerAmpProduct.costPrice,
+          salePrice: sellerAmpProduct.salePrice,
+          username: credentials.username,
+          password: credentials.password
+        })
+      })
+
+      const result = await response.json()
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to fetch SPM data')
+      }
+
+      // Show success message
+      alert(`Successfully fetched SPM from SellerAmp: ${result.spm}\n\nNote: The new data will be visible next time you run a scan for this product.`)
+
+      // Close modal
+      setShowSellerAmpModal(false)
+      setSellerAmpProduct(null)
+
+    } catch (error) {
+      console.error('SellerAmp fetch error:', error)
+      throw error // Re-throw to let modal handle the error display
+    } finally {
+      setFetchingSPM(false)
+    }
+  }
+
+  // Batch SellerAmp SPM fetching handlers
+  const openBatchSellerAmpModal = () => {
+    const filteredOpportunities = getFilteredAndSortedOpportunities().filter(opp => {
+      const monthlySales = opp.keepaSalesData?.estimatedMonthlySales || opp.salesPerMonth || 
+        (opp.ukSalesRank > 0 ? estimateMonthlySalesFromRank(opp.ukSalesRank) : 0);
+      return monthlySales === 0; // Only N/A SPM items
+    });
+    
+    if (filteredOpportunities.length === 0) {
+      alert('No products found with missing SPM data');
+      return;
+    }
+    setShowBatchSellerAmpModal(true);
+  }
+
+  const handleBatchSellerAmpFetch = async (credentials: { username: string; password: string; rememberForSession: boolean }) => {
+    setBatchFetchingSPM(true);
+    setBatchProgress({
+      processed: 0,
+      total: 0,
+      progress: 0,
+      message: 'Preparing batch fetch...',
+      successCount: 0,
+      errorCount: 0
+    });
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('Authentication required');
+      }
+
+      // Get filtered opportunities (N/A SPM only)
+      const filteredOpportunities = getFilteredAndSortedOpportunities().filter(opp => {
+        const monthlySales = opp.keepaSalesData?.estimatedMonthlySales || opp.salesPerMonth || 
+          (opp.ukSalesRank > 0 ? estimateMonthlySalesFromRank(opp.ukSalesRank) : 0);
+        return monthlySales === 0; // Only N/A SPM items
+      });
+      const asinsToFetch = filteredOpportunities.map(opp => ({
+        asin: opp.asin,
+        costPrice: opp.bestOpportunity?.sourcePriceGBP || 0,
+        salePrice: opp.targetPrice || 0
+      }));
+
+      setBatchProgress(prev => prev ? { ...prev, total: asinsToFetch.length } : null);
+
+      const response = await fetch('/api/selleramp/batch-fetch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          asins: asinsToFetch,
+          username: credentials.username,
+          password: credentials.password
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const message = JSON.parse(line.slice(6));
+              
+              switch (message.type) {
+                case 'progress':
+                  setBatchProgress({
+                    processed: message.data.processed,
+                    total: message.data.total,
+                    progress: message.data.progress,
+                    message: message.data.message,
+                    successCount: 0,
+                    errorCount: 0,
+                    currentAsin: message.data.currentAsin
+                  });
+                  break;
+                  
+                case 'success':
+                  setBatchProgress(prev => prev ? {
+                    ...prev,
+                    successCount: prev.successCount + 1
+                  } : null);
+                  break;
+                  
+                case 'error_item':
+                  setBatchProgress(prev => prev ? {
+                    ...prev,
+                    errorCount: prev.errorCount + 1
+                  } : null);
+                  break;
+                  
+                case 'complete':
+                  setBatchProgress({
+                    processed: message.data.processed,
+                    total: message.data.total,
+                    progress: 100,
+                    message: 'Batch processing completed!',
+                    successCount: message.data.successCount,
+                    errorCount: message.data.errorCount
+                  });
+                  
+                  // Refresh opportunities data
+                  if (viewingScan) {
+                    setTimeout(() => {
+                      handleLoadScan(viewingScan.id);
+                    }, 2000);
+                  }
+                  break;
+                  
+                case 'error':
+                  throw new Error(message.data.error);
+              }
+            } catch (parseError) {
+              console.error('Error parsing message:', parseError);
+            }
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error('Batch SellerAmp fetch error:', error);
+      alert(`Failed to fetch SPM data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setBatchFetchingSPM(false);
+    }
+  }
 
   // Function to filter and sort opportunities (memoized for performance)
   const getFilteredAndSortedOpportunities = useCallback(() => {
@@ -989,6 +1272,36 @@ export default function RecentScansPage() {
                       </div>
                       
                       <div className="flex items-center gap-3">
+                        {/* Bulk Fetch SPM Button - Only show when N/A filter is active */}
+                        {spmFilter === 'n/a' && (() => {
+                          const naOpportunities = getFilteredAndSortedOpportunities().filter(opp => {
+                            const monthlySales = opp.keepaSalesData?.estimatedMonthlySales || opp.salesPerMonth || 
+                              (opp.ukSalesRank > 0 ? estimateMonthlySalesFromRank(opp.ukSalesRank) : 0);
+                            return monthlySales === 0;
+                          });
+                          
+                          if (naOpportunities.length > 0) {
+                            return (
+                              <button
+                                onClick={openBatchSellerAmpModal}
+                                disabled={batchFetchingSPM}
+                                className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors flex items-center gap-2 disabled:opacity-50"
+                                title="Fetch SPM data from SellerAmp for all N/A items"
+                              >
+                                {batchFetchingSPM ? (
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                ) : (
+                                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
+                                  </svg>
+                                )}
+                                Fetch All SPM via SellerAmp ({naOpportunities.length})
+                              </button>
+                            );
+                          }
+                          return null;
+                        })()}
+
                         {selectedDeals.size > 0 && (
                           <>
                             <span className="text-sm text-gray-600">
@@ -1034,6 +1347,17 @@ export default function RecentScansPage() {
                             </button>
                           </>
                         )}
+
+                        {/* Download ASINs CSV Button */}
+                        <button
+                          onClick={exportASINsToCSV}
+                          disabled={opportunities.length === 0}
+                          className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                          title={`Download all ${opportunities.length} ASINs as CSV for debug mode`}
+                        >
+                          <ArrowDownTrayIcon className="w-4 h-4" />
+                          Download ASINs CSV ({opportunities.length})
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1676,13 +2000,30 @@ export default function RecentScansPage() {
                                     }
                                     
                                     return (
-                                      <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${bgClass} border ${borderClass}`}>
-                                        <span className="text-xs font-medium text-gray-600">SPM:</span>
-                                        <span className={`text-sm font-bold ${colorClass}`}>
-                                          {monthlySales > 0 ? monthlySales.toLocaleString() : 'N/A'}
-                                        </span>
-                                        {opp.keepaSalesData && (
-                                          <span className="text-xs text-gray-500">(Keepa)</span>
+                                      <div className="flex items-center gap-2">
+                                        <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${bgClass} border ${borderClass}`}>
+                                          <span className="text-xs font-medium text-gray-600">SPM:</span>
+                                          <span className={`text-sm font-bold ${colorClass}`}>
+                                            {monthlySales > 0 ? monthlySales.toLocaleString() : 'N/A'}
+                                          </span>
+                                          {opp.keepaSalesData && (
+                                            <span className="text-xs text-gray-500">(Keepa)</span>
+                                          )}
+                                        </div>
+                                        
+                                        {/* SellerAmp Fetch Button for N/A SPM */}
+                                        {monthlySales === 0 && (
+                                          <button
+                                            onClick={() => openSellerAmpModal(
+                                              opp.asin,
+                                              opp.bestOpportunity.sourcePriceGBP || 0,
+                                              opp.targetPrice || 0
+                                            )}
+                                            className="px-2 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                                            title="Fetch SPM data from SellerAmp"
+                                          >
+                                            📊 Fetch SPM
+                                          </button>
                                         )}
                                       </div>
                                     );
@@ -2775,6 +3116,91 @@ export default function RecentScansPage() {
         selectedDeals={opportunities.filter((opp: any) => selectedDeals.has(opp.asin))}
         addedFrom="recent_scans"
       />
+
+      {/* SellerAmp Modal */}
+      {sellerAmpProduct && (
+        <SellerAmpModal
+          isOpen={showSellerAmpModal}
+          onClose={() => {
+            setShowSellerAmpModal(false)
+            setSellerAmpProduct(null)
+          }}
+          onSubmit={handleSellerAmpFetch}
+          asin={sellerAmpProduct.asin}
+          costPrice={sellerAmpProduct.costPrice}
+          salePrice={sellerAmpProduct.salePrice}
+          isLoading={fetchingSPM}
+        />
+      )}
+
+      {/* Batch SellerAmp Modal */}
+      <SellerAmpModal
+        isOpen={showBatchSellerAmpModal}
+        onClose={() => {
+          setShowBatchSellerAmpModal(false);
+          setBatchProgress(null);
+        }}
+        onSubmit={handleBatchSellerAmpFetch}
+        asin={`${getFilteredAndSortedOpportunities().filter(opp => {
+          const monthlySales = opp.keepaSalesData?.estimatedMonthlySales || opp.salesPerMonth || 
+            (opp.ukSalesRank > 0 ? estimateMonthlySalesFromRank(opp.ukSalesRank) : 0);
+          return monthlySales === 0;
+        }).length} ASINs`}
+        costPrice={0}
+        salePrice={0}
+        isLoading={batchFetchingSPM}
+        isBatchMode={true}
+      />
+
+      {/* Batch Progress Modal */}
+      {batchProgress && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full">
+            <div className="text-center">
+              <h3 className="text-lg font-semibold mb-4">Fetching SPM Data</h3>
+              
+              {/* Progress Bar */}
+              <div className="w-full bg-gray-200 rounded-full h-2 mb-4">
+                <div 
+                  className="bg-orange-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${batchProgress.progress}%` }}
+                ></div>
+              </div>
+              
+              {/* Progress Stats */}
+              <div className="flex justify-between text-sm text-gray-600 mb-4">
+                <span>{batchProgress.processed} / {batchProgress.total}</span>
+                <span>{batchProgress.progress.toFixed(0)}%</span>
+              </div>
+              
+              {/* Current Status */}
+              <p className="text-sm text-gray-700 mb-2">{batchProgress.message}</p>
+              {batchProgress.currentAsin && (
+                <p className="text-xs text-gray-500 mb-4">Processing: {batchProgress.currentAsin}</p>
+              )}
+              
+              {/* Success/Error Counts */}
+              <div className="flex justify-center gap-4 text-sm mb-4">
+                <span className="text-green-600">✅ {batchProgress.successCount} success</span>
+                <span className="text-red-600">❌ {batchProgress.errorCount} errors</span>
+              </div>
+              
+              {batchProgress.progress < 100 && (
+                <button
+                  onClick={() => {
+                    setBatchFetchingSPM(false);
+                    setBatchProgress(null);
+                    setShowBatchSellerAmpModal(false);
+                  }}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800 text-sm"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )

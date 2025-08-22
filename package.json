@@ -8,7 +8,8 @@
     "start": "next start -p ${PORT:-3000} -H ${HOSTNAME:-0.0.0.0}",
     "start:production": "NODE_ENV=production node .next/standalone/server.js",
     "lint": "next lint",
-    "sync:catalog": "node scripts/sync-catalog.js"
+    "sync:catalog": "node scripts/sync-catalog.js",
+    "test:selleramp": "npx ts-node --esm src/scripts/test-selleramp.ts"
   },
   "dependencies": {
     "@aws-sdk/client-sts": "^3.858.0",
@@ -31,6 +32,7 @@
     "next": "^15.4.5",
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
+    "openai": "^5.13.1",
     "puppeteer": "^24.15.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

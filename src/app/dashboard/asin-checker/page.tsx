@@ -19,6 +19,7 @@ import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator'
 import { categorizeProfitLevel, getProfitCategoryColor, getProfitCategoryBgColor, getProfitCategoryIcon, getProfitCategoryLabel } from '@/lib/profit-categorizer'
 import ASINListManager from '@/components/ASINListManager'
 import SaveASINListModal from '@/components/SaveASINListModal'
+import { AIAnalysisResult } from '@/services/ai-deal-analyzer'
 
 // Exchange rate constant
 const EUR_TO_GBP_RATE = 0.86
@@ -81,9 +82,10 @@ interface ArbitrageOpportunity {
   }
   keepaSalesData?: KeepaData | null
   keepaGraphUrl?: string | null
+  aiAnalysis?: AIAnalysisResult | null
 }
 
-type SortOption = 'profit' | 'roi' | 'margin' | 'price'
+type SortOption = 'profit' | 'roi' | 'margin' | 'price' | 'aiScore'
 type ProfitFilter = 'profitable' | 'include-breakeven' | 'all' | 'new-deals' | 'hide-zero-spm' | 'only-with-spm'
 
 export default function ASINCheckerPage() {
@@ -422,7 +424,8 @@ export default function ASINCheckerPage() {
         },
         body: JSON.stringify({
           asins: finalAsins,
-          includeKeepa: false  // Set to false for faster processing
+          includeKeepa: true,        // Enable Keepa for AI analysis
+          includeAIAnalysis: true    // Enable AI deal scoring
         })
       })
       
@@ -551,6 +554,8 @@ export default function ASINCheckerPage() {
         return (b.bestOpportunity?.profitMargin || 0) - (a.bestOpportunity?.profitMargin || 0)
       case 'price':
         return (a.targetPrice || 0) - (b.targetPrice || 0)
+      case 'aiScore':
+        return (b.aiAnalysis?.aiScore || 0) - (a.aiAnalysis?.aiScore || 0)
       default:
         return 0
     }
@@ -876,6 +881,7 @@ export default function ASINCheckerPage() {
                         <option value="roi">Highest ROI</option>
                         <option value="margin">Highest Margin</option>
                         <option value="price">Lowest Price</option>
+                        <option value="aiScore">🧠 AI Score</option>
                       </select>
                     </div>
                   </div>
@@ -1156,6 +1162,132 @@ export default function ASINCheckerPage() {
                             </p>
                           </div>
                         </div>
+                        
+                        {/* AI Analysis Display */}
+                        {opp.aiAnalysis && (
+                          <div className="mt-4 p-3 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-200">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm font-medium text-purple-800">🧠 AI Deal Score</span>
+                              <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                                opp.aiAnalysis.aiScore >= 850 ? 'bg-red-100 text-red-800' :
+                                opp.aiAnalysis.aiScore >= 750 ? 'bg-orange-100 text-orange-800' :
+                                opp.aiAnalysis.aiScore >= 600 ? 'bg-green-100 text-green-800' :
+                                opp.aiAnalysis.aiScore >= 450 ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-gray-100 text-gray-800'
+                              }`}>
+                                {opp.aiAnalysis.dealClassification}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-2xl font-bold text-purple-800">
+                                    {opp.aiAnalysis.aiScore}/1000
+                                  </span>
+                                  <span className="text-sm text-purple-600">
+                                    ({opp.aiAnalysis.confidence}% confidence)
+                                  </span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2">
+                                  <div 
+                                    className={`h-2 rounded-full ${
+                                      opp.aiAnalysis.aiScore >= 750 ? 'bg-gradient-to-r from-green-400 to-green-600' :
+                                      opp.aiAnalysis.aiScore >= 600 ? 'bg-gradient-to-r from-blue-400 to-blue-600' :
+                                      opp.aiAnalysis.aiScore >= 450 ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' :
+                                      'bg-gradient-to-r from-red-400 to-red-600'
+                                    }`}
+                                    style={{ width: `${(opp.aiAnalysis.aiScore / 1000) * 100}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {/* Quick Insights */}
+                            <div className="mt-2 text-xs">
+                              <div className="flex items-center gap-4 text-purple-700">
+                                <span>💰 Price: {opp.aiAnalysis.currentPricePercentile}th percentile</span>
+                                <span>📊 Sales: {opp.aiAnalysis.salesVelocityRank}</span>
+                                <span>🏪 Competition: {opp.aiAnalysis.competitionTrend}</span>
+                              </div>
+                              
+                              {/* OpenAI Enhanced Insights */}
+                              {opp.aiAnalysis.openaiAnalysis && (
+                                <div className="mt-2 p-2 bg-gradient-to-r from-emerald-50 to-teal-50 rounded border border-emerald-200">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-emerald-700 font-medium">🤖 GPT Enhanced Analysis</span>
+                                    <span className="px-1.5 py-0.5 bg-emerald-200 text-emerald-800 rounded text-xs font-bold">
+                                      {opp.aiAnalysis.openaiAnalysis.gptQualityScore}/10
+                                    </span>
+                                    {opp.aiAnalysis.openaiAnalysis.scoreAdjustment !== 0 && (
+                                      <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${
+                                        opp.aiAnalysis.openaiAnalysis.scoreAdjustment > 0 
+                                          ? 'bg-green-200 text-green-800' 
+                                          : 'bg-red-200 text-red-800'
+                                      }`}>
+                                        {opp.aiAnalysis.openaiAnalysis.scoreAdjustment > 0 ? '+' : ''}{opp.aiAnalysis.openaiAnalysis.scoreAdjustment}
+                                      </span>
+                                    )}
+                                  </div>
+                                  
+                                  {opp.aiAnalysis.openaiAnalysis.gptInsights && opp.aiAnalysis.openaiAnalysis.gptInsights.length > 0 && (
+                                    <div className="text-emerald-700 mb-1">
+                                      🔍 {opp.aiAnalysis.openaiAnalysis.gptInsights[0]}
+                                    </div>
+                                  )}
+                                  
+                                  <div className="flex items-center gap-3 text-emerald-600">
+                                    {opp.aiAnalysis.openaiAnalysis.gptTimingRecommendation && (
+                                      <span>⏰ {opp.aiAnalysis.openaiAnalysis.gptTimingRecommendation}</span>
+                                    )}
+                                  </div>
+                                  
+                                  {opp.aiAnalysis.openaiAnalysis.categorySpecificInsights && opp.aiAnalysis.openaiAnalysis.categorySpecificInsights.length > 0 && (
+                                    <div className="mt-1 text-teal-600">
+                                      📈 {opp.aiAnalysis.openaiAnalysis.categorySpecificInsights[0]}
+                                    </div>
+                                  )}
+                                  
+                                  {opp.aiAnalysis.openaiAnalysis.seasonalFactors && opp.aiAnalysis.openaiAnalysis.seasonalFactors.length > 0 && (
+                                    <div className="mt-1 text-blue-600">
+                                      📅 {opp.aiAnalysis.openaiAnalysis.seasonalFactors[0]}
+                                    </div>
+                                  )}
+                                  
+                                  {opp.aiAnalysis.openaiAnalysis.gptRisks && opp.aiAnalysis.openaiAnalysis.gptRisks.length > 0 && (
+                                    <div className="mt-1 text-orange-600">
+                                      ⚠️ GPT Risk: {opp.aiAnalysis.openaiAnalysis.gptRisks[0]}
+                                    </div>
+                                  )}
+                                  
+                                  {opp.aiAnalysis.openaiAnalysis.gptOpportunities && opp.aiAnalysis.openaiAnalysis.gptOpportunities.length > 0 && (
+                                    <div className="mt-1 text-green-600">
+                                      🎯 GPT Opportunity: {opp.aiAnalysis.openaiAnalysis.gptOpportunities[0]}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              
+                              {/* Fallback to basic insights if no OpenAI */}
+                              {!opp.aiAnalysis.openaiAnalysis && (
+                                <>
+                                  {opp.aiAnalysis.topInsights && opp.aiAnalysis.topInsights.length > 0 && (
+                                    <div className="mt-1 text-purple-600">
+                                      💡 {opp.aiAnalysis.topInsights[0]}
+                                    </div>
+                                  )}
+                                  {opp.aiAnalysis.warnings && opp.aiAnalysis.warnings.length > 0 && (
+                                    <div className="mt-1 text-orange-600">
+                                      ⚠️ {opp.aiAnalysis.warnings[0]}
+                                    </div>
+                                  )}
+                                  <div className="mt-1 text-purple-600">
+                                    ⏰ {opp.aiAnalysis.optimalBuyingWindow}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
                         
                         {/* Share Buttons Container */}
                         <div className="mt-3 flex items-center gap-2 ml-auto">

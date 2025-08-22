@@ -20,6 +20,9 @@ export interface RequiredEnvVars {
   keepa?: {
     apiKey?: boolean;
   };
+  openai?: {
+    apiKey?: boolean;
+  };
 }
 
 export function checkEnvVars(required: RequiredEnvVars): {
@@ -89,6 +92,13 @@ export function checkEnvVars(required: RequiredEnvVars): {
     const val = process.env.KEEPA_API_KEY;
     if (!val) missing.push('KEEPA_API_KEY');
     else values.keepaApiKey = val;
+  }
+
+  // Check OpenAI vars
+  if (required.openai?.apiKey) {
+    const val = process.env.OPENAI_API_KEY;
+    if (!val) missing.push('OPENAI_API_KEY');
+    else values.openaiApiKey = val;
   }
 
   return {

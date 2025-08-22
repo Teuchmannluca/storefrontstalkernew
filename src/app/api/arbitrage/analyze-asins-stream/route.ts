@@ -11,6 +11,8 @@ import { BlacklistService } from '@/lib/blacklist-service';
 import { categorizeProfitLevel } from '@/lib/profit-categorizer';
 import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator';
 import { KeepaProductService } from '@/services/keepa-product-service';
+import { KeepaComprehensiveAPI } from '@/lib/keepa-comprehensive-api';
+import { AIDealAnalyzer } from '@/services/ai-deal-analyzer';
 
 // Marketplace IDs
 const MARKETPLACES = {
@@ -218,6 +220,7 @@ export async function POST(request: NextRequest) {
     
     const asins = body.asins;
     const includeKeepa = body.includeKeepa !== false; // Default to true for backward compatibility
+    const includeAIAnalysis = body.includeAIAnalysis !== false; // Default to true for enhanced analysis
 
     // Check required environment variables
     const envCheck = checkEnvVars({
@@ -300,7 +303,8 @@ export async function POST(request: NextRequest) {
                 marketplaces: Object.keys(MARKETPLACES),
                 asins_count: validASINs.length,
                 batch_size: RATE_LIMITS.COMPETITIVE_PRICING.itemsPerRequest,
-                include_keepa: includeKeepa
+                include_keepa: includeKeepa,
+                include_ai_analysis: includeAIAnalysis
               }
             })
             .select()
@@ -335,10 +339,20 @@ export async function POST(request: NextRequest) {
           
           // Initialize Keepa service if API key is available and requested
           let keepaService: KeepaProductService | null = null;
+          let keepaComprehensiveApi: KeepaComprehensiveAPI | null = null;
+          let aiAnalyzer: AIDealAnalyzer | null = null;
+          
           const keepaApiKey = process.env.KEEPA_API_KEY;
           if (keepaApiKey && includeKeepa) {
             console.log('[KEEPA] API key found, initializing service for user:', user.id);
             keepaService = new KeepaProductService(keepaApiKey, user.id, 2); // UK domain
+            
+            // Initialize AI services if requested
+            if (includeAIAnalysis) {
+              console.log('[AI] Initializing comprehensive Keepa API and AI analyzer');
+              keepaComprehensiveApi = new KeepaComprehensiveAPI(keepaApiKey, 2);
+              aiAnalyzer = new AIDealAnalyzer();
+            }
           } else {
             console.log(includeKeepa ? '[KEEPA] No API key found in environment' : '[KEEPA] Disabled for faster processing');
           }
@@ -726,7 +740,114 @@ export async function POST(request: NextRequest) {
                           });
                       }
 
-                      // IMMEDIATELY send opportunity to UI
+                      // Perform AI Analysis if enabled and services available
+                      let aiAnalysis = null;
+                      if (includeAIAnalysis && keepaComprehensiveApi && aiAnalyzer && bestOpportunity.profit > 0) {
+                        try {
+                          console.log(`[AI] Starting analysis for profitable ASIN: ${asin}`);
+                          
+                          // Get comprehensive Keepa data for AI analysis
+                          const comprehensiveData = await keepaComprehensiveApi.getComprehensiveData(asin, {
+                            includePriceHistory: false, // Skip history for speed in real-time
+                            includeOfferHistory: true,
+                            includeRankHistory: false,
+                            daysBack: 90, // 3 months for real-time analysis
+                            includeReviews: false
+                          });
+                          
+                          if (comprehensiveData) {
+                            // Override Keepa FBA count with accurate SP-API data
+                            const correctedComprehensiveData = {
+                              ...comprehensiveData,
+                              fbaOfferCount: ukPricing.numberOfOffers, // Use SP-API count instead of Keepa's potentially inaccurate count
+                              totalOfferCount: ukPricing.numberOfOffers
+                            };
+                            
+                            // Prepare arbitrage context for AI
+                            const arbitrageContext = {
+                              buyPrice: bestOpportunity.sourcePriceGBP,
+                              sellPrice: ukPricing.price,
+                              profit: bestOpportunity.profit,
+                              roi: bestOpportunity.roi
+                            };
+                            
+                            // Generate AI analysis with corrected competition data and OpenAI enhancement
+                            aiAnalysis = await aiAnalyzer.analyzeComprehensively(correctedComprehensiveData, arbitrageContext, { 
+                              useOpenAI: true // Enable OpenAI enhancement for streaming analysis
+                            });
+                            
+                            // Store AI analysis in database for this opportunity
+                            if (scanId) {
+                              const { data: savedAnalysis } = await supabase
+                                .from('ai_deal_analysis')
+                                .insert({
+                                  asin,
+                                  user_id: user.id,
+                                  ai_score: aiAnalysis.aiScore,
+                                  confidence_percentage: aiAnalysis.confidence,
+                                  deal_classification: aiAnalysis.dealType,
+                                  sales_score: aiAnalysis.salesScore,
+                                  price_score: aiAnalysis.priceScore,
+                                  competition_score: aiAnalysis.competitionScore,
+                                  opportunity_score: aiAnalysis.opportunityScore,
+                                  risk_score: aiAnalysis.riskScore,
+                                  predicted_price_30d: aiAnalysis.predictedPriceIn30Days,
+                                  predicted_sales_30d: aiAnalysis.predictedSalesIn30Days,
+                                  optimal_buy_timing: aiAnalysis.optimalBuyingWindow,
+                                  price_trend: aiAnalysis.priceTrend,
+                                  sales_trend: aiAnalysis.salesTrend,
+                                  competition_trend: aiAnalysis.competitionTrend,
+                                  current_price_percentile: aiAnalysis.currentPricePercentile,
+                                  sales_velocity_rank: aiAnalysis.salesVelocityRank,
+                                  top_insights: aiAnalysis.topInsights,
+                                  warnings: aiAnalysis.warnings,
+                                  opportunities: aiAnalysis.opportunities,
+                                  keepa_data_snapshot: correctedComprehensiveData,
+                                  arbitrage_context: arbitrageContext,
+                                  data_completeness: comprehensiveData.dataCompleteness,
+                                  keepa_data_source: comprehensiveData.spmDataSource,
+                                  keepa_confidence: comprehensiveData.spmConfidence,
+                                })
+                                .select('id')
+                                .single();
+                              
+                              // Store OpenAI enhanced analysis if available
+                              if (aiAnalysis.openaiAnalysis && savedAnalysis) {
+                                await supabase
+                                  .from('openai_analysis')
+                                  .insert({
+                                    asin,
+                                    user_id: user.id,
+                                    base_ai_analysis_id: savedAnalysis.id,
+                                    gpt_insights: aiAnalysis.openaiAnalysis.gptInsights,
+                                    gpt_quality_score: aiAnalysis.openaiAnalysis.gptQualityScore,
+                                    gpt_confidence: aiAnalysis.openaiAnalysis.gptConfidence,
+                                    gpt_price_prediction: aiAnalysis.openaiAnalysis.gptPricePrediction,
+                                    gpt_sales_prediction: aiAnalysis.openaiAnalysis.gptSalesPrediction,
+                                    gpt_timing_recommendation: aiAnalysis.openaiAnalysis.gptTimingRecommendation,
+                                    gpt_risks: aiAnalysis.openaiAnalysis.gptRisks,
+                                    gpt_opportunities: aiAnalysis.openaiAnalysis.gptOpportunities,
+                                    category_specific_insights: aiAnalysis.openaiAnalysis.categorySpecificInsights,
+                                    seasonal_factors: aiAnalysis.openaiAnalysis.seasonalFactors,
+                                    market_context_analysis: aiAnalysis.openaiAnalysis.marketContextAnalysis,
+                                    score_adjustment: aiAnalysis.openaiAnalysis.scoreAdjustment,
+                                    adjustment_reason: aiAnalysis.openaiAnalysis.adjustmentReason,
+                                    prompt_tokens: aiAnalysis.openaiAnalysis.promptTokens,
+                                    completion_tokens: aiAnalysis.openaiAnalysis.completionTokens,
+                                    estimated_cost: aiAnalysis.openaiAnalysis.estimatedCost,
+                                  });
+                              }
+                            }
+                            
+                            console.log(`[AI] Analysis complete for ${asin}: Score ${aiAnalysis.aiScore}/1000, Classification: ${aiAnalysis.dealType}`);
+                          }
+                        } catch (aiError) {
+                          console.error(`[AI] Error analyzing ${asin}:`, aiError);
+                          // Continue without AI analysis - don't fail the entire opportunity
+                        }
+                      }
+
+                      // IMMEDIATELY send opportunity to UI (now with AI analysis)
                       const opportunity = {
                         asin,
                         productName,
@@ -743,7 +864,27 @@ export async function POST(request: NextRequest) {
                         euPrices: euPrices.sort((a, b) => b.roi - a.roi),
                         bestOpportunity,
                         profitCategory,
-                        priceHistory
+                        priceHistory,
+                        aiAnalysis: aiAnalysis ? {
+                          aiScore: aiAnalysis.aiScore,
+                          dealClassification: aiAnalysis.dealType,
+                          confidence: aiAnalysis.confidence,
+                          priceTrend: aiAnalysis.priceTrend,
+                          salesTrend: aiAnalysis.salesTrend,
+                          competitionTrend: aiAnalysis.competitionTrend,
+                          currentPricePercentile: aiAnalysis.currentPricePercentile,
+                          salesVelocityRank: aiAnalysis.salesVelocityRank,
+                          optimalBuyingWindow: aiAnalysis.optimalBuyingWindow,
+                          topInsights: aiAnalysis.topInsights.slice(0, 3), // Top 3 for UI
+                          warnings: aiAnalysis.warnings.slice(0, 2), // Top 2 warnings
+                          scoreBreakdown: {
+                            sales: aiAnalysis.salesScore,
+                            price: aiAnalysis.priceScore,
+                            competition: aiAnalysis.competitionScore,
+                            opportunity: aiAnalysis.opportunityScore,
+                            risk: aiAnalysis.riskScore
+                          }
+                        } : null
                       };
 
                       sendMessage({ type: 'opportunity', data: opportunity });
