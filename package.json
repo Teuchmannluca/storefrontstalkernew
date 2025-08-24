@@ -12,7 +12,7 @@
     "test:selleramp": "npx ts-node --esm src/scripts/test-selleramp.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-sts": "^3.858.0",
+    "@aws-sdk/client-sts": "^3.859.0",
     "@headlessui/react": "^2.2.7",
     "@heroicons/react": "^2.2.0",
     "@supabase/ssr": "^0.6.1",
