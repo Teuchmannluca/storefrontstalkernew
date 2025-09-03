@@ -102,6 +102,15 @@ export default function ASINCheckerPage() {
     excludedCount?: number
     totalAsins?: number
     estimatedMinutesRemaining?: number
+    keepaStatus?: 'enabled' | 'disabled' | 'error'
+    keepaReason?: string
+    keepaTokens?: {
+      available: number
+      needed: number
+      sufficient: boolean
+    }
+    keepaWarning?: boolean
+    keepaError?: boolean
   } | null>(null)
   const [profitFilter, setProfitFilter] = useState<ProfitFilter>('profitable')
   const [sortBy, setSortBy] = useState<SortOption>('profit')
@@ -462,7 +471,13 @@ export default function ASINCheckerPage() {
                     progress: message.data.progress,
                     excludedCount: message.data.excludedCount,
                     totalAsins: message.data.totalAsins,
-                    estimatedMinutesRemaining: message.data.estimatedMinutesRemaining
+                    estimatedMinutesRemaining: message.data.estimatedMinutesRemaining,
+                    keepaStatus: message.data.keepaStatus === 'disabled' ? 'disabled' : 
+                                message.data.keepaError ? 'error' : prev?.keepaStatus,
+                    keepaReason: message.data.keepaReason || prev?.keepaReason,
+                    keepaTokens: message.data.keepaTokens || prev?.keepaTokens,
+                    keepaWarning: message.data.keepaWarning || prev?.keepaWarning,
+                    keepaError: message.data.keepaError || prev?.keepaError
                   }))
                   if (message.data.scanId) {
                     setLastScanId(message.data.scanId)
@@ -805,6 +820,50 @@ export default function ASINCheckerPage() {
                       )}
                       <p>Exchange rate: €1 = £{analysisStats.exchangeRate}</p>
                     </div>
+                    
+                    {/* Keepa Status Indicator */}
+                    {(analysisStats.keepaStatus || analysisStats.keepaTokens || analysisStats.keepaWarning || analysisStats.keepaError) && (
+                      <div className="mt-3 p-3 rounded-lg border">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${
+                              analysisStats.keepaStatus === 'disabled' ? 'bg-gray-400' :
+                              analysisStats.keepaError ? 'bg-red-400' :
+                              analysisStats.keepaWarning ? 'bg-yellow-400' :
+                              analysisStats.keepaTokens?.sufficient ? 'bg-green-400' : 'bg-yellow-400'
+                            }`}></div>
+                            <span className="text-sm font-medium text-gray-900">Keepa SPM Status</span>
+                          </div>
+                        </div>
+                        
+                        <div className="text-xs text-gray-600 space-y-1">
+                          {analysisStats.keepaStatus === 'disabled' && (
+                            <p className="text-gray-500">
+                              SPM data disabled: {analysisStats.keepaReason || 'Using BSR estimates only'}
+                            </p>
+                          )}
+                          
+                          {analysisStats.keepaTokens && (
+                            <p className={analysisStats.keepaTokens.sufficient ? 'text-green-600' : 'text-yellow-600'}>
+                              Tokens: {analysisStats.keepaTokens.available} available, {analysisStats.keepaTokens.needed} needed
+                              {!analysisStats.keepaTokens.sufficient && ' (insufficient)'}
+                            </p>
+                          )}
+                          
+                          {analysisStats.keepaWarning && (
+                            <p className="text-yellow-600">
+                              ⚠️ Limited SPM data expected due to token constraints
+                            </p>
+                          )}
+                          
+                          {analysisStats.keepaError && (
+                            <p className="text-red-600">
+                              ❌ Keepa service error - SPM data may be unavailable
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

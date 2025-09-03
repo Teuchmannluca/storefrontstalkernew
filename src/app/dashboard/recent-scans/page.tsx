@@ -1104,7 +1104,12 @@ export default function RecentScansPage() {
 
   const loadMoreItems = useCallback(() => {
     setRenderLimit(prev => prev + INITIAL_RENDER_LIMIT)
-  }, [INITIAL_RENDER_LIMIT])
+    // If displayLimit is the bottleneck, increase it too
+    setDisplayLimit(prev => {
+      const newRenderLimit = renderLimit + INITIAL_RENDER_LIMIT
+      return Math.max(prev, newRenderLimit)
+    })
+  }, [INITIAL_RENDER_LIMIT, renderLimit])
 
   // Reset render limit when filters change
   useEffect(() => {

@@ -169,16 +169,47 @@ export class KeepaAPI {
         buybox: 1,  // Get Buy Box data
       };
       
+      console.log(`[KEEPA DEBUG] Requesting data for ASIN: ${asin} with params:`, params);
       const response = await axios.get(url, { params });
+      
+      console.log(`[KEEPA DEBUG] Raw response for ASIN ${asin}:`, {
+        status: response.status,
+        tokensLeft: response.data?.tokensLeft,
+        processingTime: response.data?.processingTimeInMs,
+        productsCount: response.data?.products?.length,
+        timestamp: response.data?.timestamp
+      });
       
       if (response.data && response.data.products && response.data.products.length > 0) {
         const product = response.data.products[0];
-        return this.parseKeepaProductStats(product);
+        console.log(`[KEEPA DEBUG] Product data structure for ASIN ${asin}:`, {
+          hasStats: !!product.stats,
+          statsKeys: product.stats ? Object.keys(product.stats) : [],
+          salesRankDrops30: product.stats?.salesRankDrops30,
+          salesRankDrops90: product.stats?.salesRankDrops90,
+          title: product.title
+        });
+        
+        const parsedStats = this.parseKeepaProductStats(product);
+        console.log(`[KEEPA DEBUG] Parsed SPM data for ASIN ${asin}:`, {
+          estimatedMonthlySales: parsedStats.estimatedMonthlySales,
+          spmDataSource: parsedStats.spmDataSource,
+          spmConfidence: parsedStats.spmConfidence,
+          salesDrops30d: parsedStats.salesDrops30d,
+          salesDrops90d: parsedStats.salesDrops90d
+        });
+        
+        return parsedStats;
       }
       
+      console.log(`[KEEPA DEBUG] No product data returned for ASIN: ${asin}`);
       return null;
     } catch (error) {
-      console.error('Keepa API error:', error);
+      console.error(`[KEEPA ERROR] Failed to fetch data for ASIN ${asin}:`, error);
+      if (axios.isAxiosError(error)) {
+        console.error('[KEEPA ERROR] Response data:', error.response?.data);
+        console.error('[KEEPA ERROR] Response status:', error.response?.status);
+      }
       throw error;
     }
   }
@@ -188,6 +219,8 @@ export class KeepaAPI {
       // Keepa allows up to 100 ASINs per request
       const batchSize = 100;
       const results: KeepaProductStats[] = [];
+      
+      console.log(`[KEEPA DEBUG] Batch processing ${asins.length} ASINs in batches of ${batchSize}`);
       
       for (let i = 0; i < asins.length; i += batchSize) {
         const batch = asins.slice(i, i + batchSize);
@@ -202,19 +235,35 @@ export class KeepaAPI {
           buybox: 1,
         };
         
+        console.log(`[KEEPA DEBUG] Batch ${Math.floor(i/batchSize) + 1}: Processing ${batch.length} ASINs`);
         const response = await axios.get(url, { params });
         
+        console.log(`[KEEPA DEBUG] Batch response:`, {
+          tokensLeft: response.data?.tokensLeft,
+          productsReturned: response.data?.products?.length,
+          batchRequested: batch.length
+        });
+        
         if (response.data && response.data.products) {
-          const batchResults = response.data.products.map((product: any) => 
-            this.parseKeepaProductStats(product)
-          );
+          const batchResults = response.data.products.map((product: any, index: number) => {
+            const stats = this.parseKeepaProductStats(product);
+            console.log(`[KEEPA DEBUG] Batch item ${index + 1} (${product.asin}): SPM=${stats.estimatedMonthlySales}, Source=${stats.spmDataSource}`);
+            return stats;
+          });
           results.push(...batchResults);
+        } else {
+          console.log(`[KEEPA DEBUG] No products returned for batch starting at index ${i}`);
         }
       }
       
+      console.log(`[KEEPA DEBUG] Batch processing complete. Processed ${results.length} products with SPM data`);
       return results;
     } catch (error) {
-      console.error('Keepa API batch error:', error);
+      console.error('[KEEPA ERROR] Batch processing failed:', error);
+      if (axios.isAxiosError(error)) {
+        console.error('[KEEPA ERROR] Batch response data:', error.response?.data);
+        console.error('[KEEPA ERROR] Batch response status:', error.response?.status);
+      }
       throw error;
     }
   }
@@ -238,21 +287,36 @@ export class KeepaAPI {
     let spmDataSource: 'none' | '30day' | '90day' = 'none';
     let spmConfidence: 'none' | 'low' | 'medium' | 'high' = 'none';
 
+    console.log(`[KEEPA DEBUG] SPM calculation for ASIN ${product.asin || 'unknown'}:`, {
+      salesDrops30d,
+      salesDrops90d,
+      rawStats: stats,
+      availableStatsKeys: Object.keys(stats || {})
+    });
+
     if (salesDrops90d > 0) {
       // Prefer 90-day data as it's more accurate
       estimatedMonthlySales = Math.round(salesDrops90d / 3);
       spmDataSource = '90day';
       spmConfidence = 'high';
-      console.log(`[KEEPA] ASIN ${product.asin || 'unknown'}: Using 90-day data (${salesDrops90d} drops → ${estimatedMonthlySales} SPM)`);
+      console.log(`[KEEPA SPM] ASIN ${product.asin || 'unknown'}: Using 90-day data (${salesDrops90d} drops → ${estimatedMonthlySales} SPM)`);
     } else if (salesDrops30d > 0) {
       // Fallback to 30-day data as monthly estimate
       estimatedMonthlySales = salesDrops30d;
       spmDataSource = '30day';
       spmConfidence = 'medium';
-      console.log(`[KEEPA] ASIN ${product.asin || 'unknown'}: Fallback to 30-day data (${salesDrops30d} drops → ${estimatedMonthlySales} SPM)`);
+      console.log(`[KEEPA SPM] ASIN ${product.asin || 'unknown'}: Fallback to 30-day data (${salesDrops30d} drops → ${estimatedMonthlySales} SPM)`);
     } else {
-      // No sales data available
-      console.log(`[KEEPA] ASIN ${product.asin || 'unknown'}: No SPM data available (90d: ${salesDrops90d}, 30d: ${salesDrops30d})`);
+      // No sales data available - log the raw stats for debugging
+      console.log(`[KEEPA SPM] ASIN ${product.asin || 'unknown'}: No SPM data available`, {
+        salesDrops90d,
+        salesDrops30d,
+        hasStats: !!stats,
+        allStatsFields: stats ? Object.entries(stats).reduce((acc: any, [key, value]) => {
+          acc[key] = value;
+          return acc;
+        }, {}) : 'no stats'
+      });
     }
     
     // Extract Buy Box win rate

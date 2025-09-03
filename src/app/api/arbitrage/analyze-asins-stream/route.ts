@@ -354,7 +354,19 @@ export async function POST(request: NextRequest) {
               aiAnalyzer = new AIDealAnalyzer();
             }
           } else {
-            console.log(includeKeepa ? '[KEEPA] No API key found in environment' : '[KEEPA] Disabled for faster processing');
+            const reason = !keepaApiKey ? 'No API key found in environment' : 'Disabled for faster processing';
+            console.log(`[KEEPA] ${reason} - SPM data will use BSR estimates only`);
+            
+            // Send progress message to UI about Keepa status
+            sendMessage({ 
+              type: 'progress', 
+              data: { 
+                step: `Keepa SPM disabled: ${reason}. Using BSR estimates for sales data.`, 
+                progress: 5,
+                keepaStatus: 'disabled',
+                keepaReason: reason
+              } 
+            });
           }
 
           // Initialize blacklist service
@@ -383,18 +395,64 @@ export async function POST(request: NextRequest) {
                 waitTime: estimateInfo.waitTimeMs,
               };
               
+              console.log('[KEEPA] Token status check:', {
+                available: tokenStatus.availableTokens,
+                needed: estimateInfo.tokensNeeded,
+                sufficient: tokenStatus.availableTokens >= estimateInfo.tokensNeeded,
+                waitTime: estimateInfo.waitTimeMs
+              });
+              
               if (estimateInfo.waitTimeMs > 0) {
                 sendMessage({ 
                   type: 'progress', 
                   data: { 
                     step: `Keepa tokens: ${tokenStatus.availableTokens} available, ${estimateInfo.tokensNeeded} needed. Wait time: ${Math.ceil(estimateInfo.waitTimeMs / 1000)}s`, 
                     progress: 3,
-                    scanId
+                    scanId,
+                    keepaTokens: {
+                      available: tokenStatus.availableTokens,
+                      needed: estimateInfo.tokensNeeded,
+                      sufficient: tokenStatus.availableTokens >= estimateInfo.tokensNeeded
+                    }
+                  } 
+                });
+              } else {
+                sendMessage({ 
+                  type: 'progress', 
+                  data: { 
+                    step: `Keepa ready: ${tokenStatus.availableTokens} tokens available for ${estimateInfo.tokensNeeded} needed`, 
+                    progress: 3,
+                    scanId,
+                    keepaTokens: {
+                      available: tokenStatus.availableTokens,
+                      needed: estimateInfo.tokensNeeded,
+                      sufficient: tokenStatus.availableTokens >= estimateInfo.tokensNeeded
+                    }
                   } 
                 });
               }
+              
+              if (tokenStatus.availableTokens < estimateInfo.tokensNeeded) {
+                sendMessage({ 
+                  type: 'progress', 
+                  data: { 
+                    step: `⚠️ Warning: Only ${tokenStatus.availableTokens} Keepa tokens available, ${estimateInfo.tokensNeeded} needed. SPM data will be limited.`, 
+                    progress: 4,
+                    keepaWarning: true
+                  } 
+                });
+              }
+              
             } catch (error) {
-              console.error('Error checking Keepa tokens:', error);
+              console.error('[KEEPA] Error checking token status:', error);
+              sendMessage({ 
+                type: 'progress', 
+                data: { 
+                  step: `Keepa token check failed: ${error instanceof Error ? error.message : 'Unknown error'}. SPM data may be unavailable.`, 
+                  progress: 3,
+                  keepaError: true
+                } 
+              });
             }
           }
           
@@ -616,11 +674,26 @@ export async function POST(request: NextRequest) {
                           productImage = keepaSalesData.mainImage;
                         }
                       } else {
-                        console.log(`[KEEPA] No data returned for ASIN: ${asin}`);
+                        console.log(`[KEEPA] No data returned for ASIN: ${asin} - may be unlisted or have no sales history`);
                       }
                     } catch (keepaError) {
-                      console.error('[KEEPA] Error for', asin, keepaError);
-                      // Continue without Keepa data
+                      console.error(`[KEEPA] Error fetching data for ASIN ${asin}:`, {
+                        error: keepaError instanceof Error ? keepaError.message : String(keepaError),
+                        asin,
+                        timestamp: new Date().toISOString()
+                      });
+                      
+                      // Log additional context for debugging
+                      if (keepaError && typeof keepaError === 'object' && 'response' in keepaError) {
+                        const axiosError = keepaError as any;
+                        console.error(`[KEEPA] HTTP Error details for ${asin}:`, {
+                          status: axiosError.response?.status,
+                          statusText: axiosError.response?.statusText,
+                          data: axiosError.response?.data
+                        });
+                      }
+                      
+                      // Continue without Keepa data - this is expected behavior
                     }
                   } else {
                     console.log('[KEEPA] Service not available, skipping Keepa data fetch');
