@@ -1,4 +1,6 @@
-import OpenAI from 'openai';
+// TEMPORARILY DISABLED: OpenAI integration disabled for production build
+// import OpenAI from 'openai';
+let OpenAI: any = null;
 import { KeepaComprehensiveData } from '@/lib/keepa-comprehensive-api';
 import { AIAnalysisResult } from './ai-deal-analyzer';
 import { openaiCache } from './openai-cache';
@@ -47,18 +49,22 @@ interface OpenAIAnalysisRequest {
 }
 
 export class OpenAIDealEnhancer {
-  private openai: OpenAI;
+  private openai: any;
   private readonly MODEL = 'gpt-3.5-turbo';
   private readonly MAX_TOKENS = 800;
   
   constructor(apiKey?: string) {
-    if (!apiKey && !process.env.OPENAI_API_KEY) {
-      throw new Error('OpenAI API key is required');
-    }
+    // TEMPORARILY DISABLED: OpenAI integration disabled for production build
+    console.warn('[OpenAI] OpenAI integration is temporarily disabled');
+    this.openai = null;
     
-    this.openai = new OpenAI({
-      apiKey: apiKey || process.env.OPENAI_API_KEY!,
-    });
+    // Original code (commented out):
+    // if (!apiKey && !process.env.OPENAI_API_KEY) {
+    //   throw new Error('OpenAI API key is required');
+    // }
+    // this.openai = new OpenAI({
+    //   apiKey: apiKey || process.env.OPENAI_API_KEY!,
+    // });
   }
   
   async enhanceAnalysis(
@@ -71,6 +77,12 @@ export class OpenAIDealEnhancer {
       roi: number;
     }
   ): Promise<OpenAIEnhancedAnalysis | null> {
+    // TEMPORARILY DISABLED: Return null when OpenAI is disabled
+    if (!this.openai) {
+      console.log('[OpenAI] Analysis skipped - OpenAI integration disabled');
+      return null;
+    }
+    
     try {
       const currentPrice = keepaData.currentBuyPrice || 0;
       const competitorCount = keepaData.fbaOfferCount || 0;
@@ -271,7 +283,12 @@ Respond with JSON:
   
   // Static method to check if OpenAI is available
   static isAvailable(): boolean {
-    return !!process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'your-openai-api-key-here';
+    // TEMPORARILY DISABLED: Always return false when OpenAI is disabled
+    console.log('[OpenAI] OpenAI integration temporarily disabled');
+    return false;
+    
+    // Original code (commented out):
+    // return !!process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'your-openai-api-key-here';
   }
   
   // Static method to estimate monthly cost
