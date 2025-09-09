@@ -23,7 +23,8 @@ import {
   ArrowDownTrayIcon,
   TrashIcon,
   ChevronDownIcon,
-  NoSymbolIcon
+  NoSymbolIcon,
+  PlusCircleIcon
 } from '@heroicons/react/24/outline'
 import { Fragment } from 'react'
 import { Listbox, Transition } from '@headlessui/react'
@@ -31,6 +32,7 @@ import { useBlacklist } from '@/hooks/useBlacklist'
 import SourcingListModal from '@/components/SourcingListModal'
 import SellerAmpModal from '@/components/SellerAmpModal'
 import { StorefrontDisplay, formatStorefrontsText } from '@/lib/storefront-formatter'
+import { AddToListModal } from '@/components/AddToListModal'
 
 interface SavedScan {
   id: string
@@ -123,6 +125,10 @@ export default function RecentScansPage() {
   const [filterStatus, setFilterStatus] = useState<string>('all')
   const [filterType, setFilterType] = useState<string>('all')
   const [showAddStorefrontModal, setShowAddStorefrontModal] = useState(false)
+  
+  // Add to List modal state
+  const [showAddToListModal, setShowAddToListModal] = useState(false)
+  const [addToListItems, setAddToListItems] = useState<any[]>([])
   
   // Scan results viewing state
   const [viewingScan, setViewingScan] = useState<SavedScan | null>(null)
@@ -240,6 +246,50 @@ export default function RecentScansPage() {
   const handleBlacklistCancel = () => {
     setBlacklistConfirm(null)
     clearMessages()
+  }
+
+  const handleAddToListClick = (opportunity: any) => {
+    const item = {
+      asin: opportunity.asin,
+      product_name: opportunity.productName,
+      product_image: opportunity.productImage,
+      uk_price: opportunity.targetPrice || 0,
+      source_marketplace: opportunity.bestOpportunity?.marketplace || 'Unknown',
+      source_price_gbp: opportunity.bestOpportunity?.sourcePriceGBP || 0,
+      profit: opportunity.bestOpportunity?.profit || 0,
+      roi: opportunity.bestOpportunity?.roi || 0,
+      profit_margin: opportunity.bestOpportunity?.profitMargin || 0,
+      sales_per_month: opportunity.salesPerMonth || opportunity.keepaSalesData?.estimatedMonthlySales,
+      storefront_name: opportunity.storefronts?.[0]?.name
+    };
+    
+    setAddToListItems([item]);
+    setShowAddToListModal(true);
+  }
+
+  const handleBulkAddToList = () => {
+    const selectedOpportunities = opportunities.filter(opp => selectedDeals.has(opp.asin));
+    const items = selectedOpportunities.map(opportunity => ({
+      asin: opportunity.asin,
+      product_name: opportunity.productName,
+      product_image: opportunity.productImage,
+      uk_price: opportunity.targetPrice || 0,
+      source_marketplace: opportunity.bestOpportunity?.marketplace || 'Unknown',
+      source_price_gbp: opportunity.bestOpportunity?.sourcePriceGBP || 0,
+      profit: opportunity.bestOpportunity?.profit || 0,
+      roi: opportunity.bestOpportunity?.roi || 0,
+      profit_margin: opportunity.bestOpportunity?.profitMargin || 0,
+      sales_per_month: opportunity.salesPerMonth || opportunity.keepaSalesData?.estimatedMonthlySales,
+      storefront_name: opportunity.storefronts?.[0]?.name
+    }));
+    
+    setAddToListItems(items);
+    setShowAddToListModal(true);
+  }
+
+  const handleAddToListSuccess = () => {
+    // Clear selected items after successful addition
+    setSelectedDeals(new Set());
   }
 
   const fetchSavedScans = async () => {
@@ -1312,6 +1362,14 @@ export default function RecentScansPage() {
                             <span className="text-sm text-gray-600">
                               {selectedDeals.size} selected
                             </span>
+                            <button
+                              onClick={handleBulkAddToList}
+                              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1"
+                              title="Add selected items to sourcing list"
+                            >
+                              <PlusCircleIcon className="w-4 h-4" />
+                              Add to List ({selectedDeals.size})
+                            </button>
                             <button
                               onClick={() => {
                                 const selectedOpportunities = opportunities.filter((opp: any) => selectedDeals.has(opp.asin))
@@ -2472,6 +2530,18 @@ export default function RecentScansPage() {
                                   <span className="hidden sm:inline">Telegram</span>
                                 </button>
 
+                                {/* Add to List Button */}
+                                {isProfitable && (
+                                  <button
+                                    onClick={() => handleAddToListClick(opp)}
+                                    className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1"
+                                    title="Add to sourcing list"
+                                  >
+                                    <PlusCircleIcon className="w-4 h-4" />
+                                    Add to List
+                                  </button>
+                                )}
+
                                 {/* Blacklist Button */}
                                 <button
                                   onClick={() => handleBlacklistClick(opp.asin, opp.productName)}
@@ -3109,6 +3179,14 @@ export default function RecentScansPage() {
         onSuccess={() => {
           setShowAddStorefrontModal(false)
         }}
+      />
+
+      {/* Add to List Modal */}
+      <AddToListModal
+        isOpen={showAddToListModal}
+        onClose={() => setShowAddToListModal(false)}
+        items={addToListItems}
+        onSuccess={handleAddToListSuccess}
       />
 
       {/* Sourcing List Modal */}

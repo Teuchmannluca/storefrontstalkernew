@@ -13,13 +13,17 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   ExclamationTriangleIcon,
-  FolderIcon
+  FolderIcon,
+  NoSymbolIcon,
+  PlusCircleIcon
 } from '@heroicons/react/24/outline'
 import { estimateMonthlySalesFromRank } from '@/lib/sales-estimator'
 import { categorizeProfitLevel, getProfitCategoryColor, getProfitCategoryBgColor, getProfitCategoryIcon, getProfitCategoryLabel } from '@/lib/profit-categorizer'
 import ASINListManager from '@/components/ASINListManager'
 import SaveASINListModal from '@/components/SaveASINListModal'
 import { AIAnalysisResult } from '@/services/ai-deal-analyzer'
+import { useBlacklist } from '@/hooks/useBlacklist'
+import { AddToListModal } from '@/components/AddToListModal'
 
 // Exchange rate constant
 const EUR_TO_GBP_RATE = 0.86
@@ -128,6 +132,14 @@ export default function ASINCheckerPage() {
   const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null)
   const router = useRouter()
 
+  // Blacklist functionality
+  const { blacklistAsin, isLoading: isBlacklisting, error: blacklistError, success: blacklistSuccess, clearMessages } = useBlacklist()
+  const [blacklistConfirm, setBlacklistConfirm] = useState<{ asin: string; productName: string } | null>(null)
+  
+  // Add to List modal state (for opportunities)
+  const [showOpportunityAddToListModal, setShowOpportunityAddToListModal] = useState(false)
+  const [addToListItems, setAddToListItems] = useState<any[]>([])
+
   useEffect(() => {
     checkAuth()
     fetchAvailableLists()
@@ -156,6 +168,71 @@ export default function ASINCheckerPage() {
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/')
+  }
+
+  const handleBlacklistClick = (asin: string, productName: string) => {
+    setBlacklistConfirm({ asin, productName })
+  }
+
+  const handleBlacklistConfirm = async () => {
+    if (!blacklistConfirm) return
+    
+    const success = await blacklistAsin(blacklistConfirm.asin, 'Blacklisted from ASIN Checker')
+    if (success) {
+      setBlacklistConfirm(null)
+      // Remove the blacklisted item from opportunities
+      setOpportunities(prev => prev.filter(opp => opp.asin !== blacklistConfirm.asin))
+      setTimeout(() => clearMessages(), 3000)
+    }
+  }
+
+  const handleBlacklistCancel = () => {
+    setBlacklistConfirm(null)
+    clearMessages()
+  }
+
+  const handleAddToListClick = (opportunity: ArbitrageOpportunity) => {
+    const item = {
+      asin: opportunity.asin,
+      product_name: opportunity.productName,
+      product_image: opportunity.productImage,
+      uk_price: opportunity.targetPrice || 0,
+      source_marketplace: opportunity.bestOpportunity?.marketplace || 'Unknown',
+      source_price_gbp: opportunity.bestOpportunity?.sourcePriceGBP || 0,
+      profit: opportunity.bestOpportunity?.profit || 0,
+      roi: opportunity.bestOpportunity?.roi || 0,
+      profit_margin: opportunity.bestOpportunity?.profitMargin || 0,
+      sales_per_month: opportunity.keepaSalesData?.estimatedMonthlySales || opportunity.salesPerMonth,
+      storefront_name: null // ASIN Checker doesn't have storefront info
+    };
+    
+    setAddToListItems([item]);
+    setShowOpportunityAddToListModal(true);
+  }
+
+  const handleBulkAddToList = () => {
+    const selectedOpportunities = opportunities.filter(opp => selectedDeals.has(opp.asin));
+    const items = selectedOpportunities.map(opportunity => ({
+      asin: opportunity.asin,
+      product_name: opportunity.productName,
+      product_image: opportunity.productImage,
+      uk_price: opportunity.targetPrice || 0,
+      source_marketplace: opportunity.bestOpportunity?.marketplace || 'Unknown',
+      source_price_gbp: opportunity.bestOpportunity?.sourcePriceGBP || 0,
+      profit: opportunity.bestOpportunity?.profit || 0,
+      roi: opportunity.bestOpportunity?.roi || 0,
+      profit_margin: opportunity.bestOpportunity?.profitMargin || 0,
+      sales_per_month: opportunity.keepaSalesData?.estimatedMonthlySales || opportunity.salesPerMonth,
+      storefront_name: null // ASIN Checker doesn't have storefront info
+    }));
+    
+    setAddToListItems(items);
+    setShowOpportunityAddToListModal(true);
+  }
+
+  const handleAddToListSuccess = () => {
+    // Clear selected items after successful addition
+    setSelectedDeals(new Set());
   }
 
   const fetchAvailableLists = async () => {
@@ -973,6 +1050,14 @@ export default function ASINCheckerPage() {
                           {selectedDeals.size} selected
                         </span>
                         <button
+                          onClick={handleBulkAddToList}
+                          className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1"
+                          title="Add selected items to sourcing list"
+                        >
+                          <PlusCircleIcon className="w-4 h-4" />
+                          Add to List ({selectedDeals.size})
+                        </button>
+                        <button
                           onClick={() => {
                             const selectedOpps = sortedOpportunities.filter((opp: any) => selectedDeals.has(opp.asin));
                             let bulkMessage = `🎯 *ASIN Checker Results* (${selectedOpps.length} items)\n\n`;
@@ -1184,6 +1269,36 @@ export default function ASINCheckerPage() {
                               </button>
                             )}
                             <button className="text-purple-600 hover:underline text-sm">SAS</button>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex gap-2 mt-3">
+                            {/* Add to List Button */}
+                            {isProfitable && (
+                              <button
+                                onClick={() => handleAddToListClick(opp)}
+                                className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1"
+                                title="Add to sourcing list"
+                              >
+                                <PlusCircleIcon className="w-4 h-4" />
+                                Add to List
+                              </button>
+                            )}
+
+                            {/* Blacklist Button */}
+                            <button
+                              onClick={() => handleBlacklistClick(opp.asin, opp.productName)}
+                              disabled={isBlacklisting}
+                              className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors flex items-center gap-1 disabled:opacity-50"
+                              title="Blacklist this ASIN"
+                            >
+                              {isBlacklisting ? (
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                              ) : (
+                                <NoSymbolIcon className="w-4 h-4" />
+                              )}
+                              Blacklist
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1755,6 +1870,84 @@ export default function ASINCheckerPage() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Add to List Modal (for Opportunities) */}
+      <AddToListModal
+        isOpen={showOpportunityAddToListModal}
+        onClose={() => setShowOpportunityAddToListModal(false)}
+        items={addToListItems}
+        onSuccess={handleAddToListSuccess}
+      />
+
+      {/* Blacklist Confirmation Dialog */}
+      {blacklistConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <ExclamationTriangleIcon className="w-8 h-8 text-red-600" />
+              <h3 className="text-lg font-medium text-gray-900">
+                Confirm Blacklist
+              </h3>
+            </div>
+            
+            <p className="text-gray-600 mb-4">
+              Are you sure you want to blacklist this ASIN? It will be excluded from all future analysis.
+            </p>
+            
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+              <p className="font-medium text-gray-900">{blacklistConfirm.productName}</p>
+              <p className="text-sm text-gray-600">ASIN: {blacklistConfirm.asin}</p>
+            </div>
+            {blacklistError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-700">{blacklistError}</p>
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleBlacklistCancel}
+                disabled={isBlacklisting}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBlacklistConfirm}
+                disabled={isBlacklisting}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {isBlacklisting ? (
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Blacklisting...
+                  </div>
+                ) : (
+                  'Confirm Blacklist'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Success/Error Messages */}
+      {(blacklistSuccess || blacklistError) && !blacklistConfirm && (
+        <div className="fixed top-4 right-4 z-50">
+          <div className={`p-4 rounded-lg shadow-lg ${blacklistSuccess ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+            <div className="flex items-center gap-2">
+              {blacklistSuccess ? (
+                <CheckCircleIcon className="w-5 h-5 text-green-600" />
+              ) : (
+                <XCircleIcon className="w-5 h-5 text-red-600" />
+              )}
+              <p className={`text-sm font-medium ${blacklistSuccess ? 'text-green-700' : 'text-red-700'}`}>
+                {blacklistSuccess || blacklistError}
+              </p>
+            </div>
           </div>
         </div>
       )}
